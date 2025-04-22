@@ -3,21 +3,17 @@ import json
 import os
 import re
 import time
-from datetime import datetime
 import urllib.parse
+from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-
 
 class WebsiteScraper:
-    def __init__(self, login_url, target_url, use_selenium=False):
+    def __init__(
+        self, login_url, target_url, use_selenium=False, html_dump_dir="html_dumps"
+    ):
         """
         Initialize the scraper with login and target URLs
 
@@ -25,65 +21,216 @@ class WebsiteScraper:
             login_url (str): URL of the login page
             target_url (str): URL of the page to scrape after login
             use_selenium (bool): Whether to use Selenium for browser automation
+            html_dump_dir (str): Directory to save HTML dumps
         """
         self.login_url = login_url
         self.target_url = target_url
-        self.use_selenium = use_selenium
-        self.driver = None
 
-        # Initialize httpx session for non-Selenium operations
-        self.session = httpx.Client()
+        self.html_dump_dir = html_dump_dir
+
+        # Initialize httpx session with longer timeouts for Cloudflare challenges
+        self.session = httpx.Client(timeout=60.0, follow_redirects=True)
         # Add common headers to mimic a browser
         self.session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
             }
         )
 
-        if use_selenium:
-            self._initialize_selenium()
+    def _cloudflare_request(self, method, url, **kwargs):
+        """
+        Make a request that can handle Cloudflare challenges
 
-    def _initialize_selenium(self):
-        """Initialize Selenium WebDriver for browser automation"""
-        chrome_options = Options()
+        Args:
+            method (str): HTTP method to use (get, post)
+            url (str): URL to request
+            **kwargs: Additional arguments to pass to the request
 
-        # Add argument to disable the "Chrome is being controlled by automated software" banner
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        Returns:
+            httpx.Response: The response
+        """
+        max_retries = 5
+        retry_delay = 5  # seconds
 
-        # Add other Chrome options
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-notifications")
-        chrome_options.add_argument("--disable-popup-blocking")
-
-        # Add option to disable dev shm usage which can cause problems in containerized environments
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--headless")
-        # Add no-sandbox option which can help with some environments
-        chrome_options.add_argument("--no-sandbox")
-
-        # Add additional options for frontend scraping
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option("useAutomationExtension", False)
-
-        # Try multiple times to initialize Chrome with our options
-        max_attempts = 3
-        for attempt in range(max_attempts):
+        for attempt in range(max_retries):
             try:
-                self.driver = webdriver.Chrome(options=chrome_options)
-                print(
-                    f"Successfully initialized Chrome WebDriver (attempt {attempt+1}/{max_attempts})"
-                )
-                break
-            except Exception as e:
-                print(f"Attempt {attempt+1}/{max_attempts} failed: {str(e)}")
-                if attempt == max_attempts - 1:
-                    print("All attempts to initialize Chrome WebDriver failed.")
-                    raise
-                time.sleep(2)  # Wait before retrying
+                if method.lower() == "get":
+                    response = self.session.get(url, **kwargs)
+                elif method.lower() == "post":
+                    response = self.session.post(url, **kwargs)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+
+                # Check for Cloudflare challenge page
+                if (response.status_code == 503 or response.status_code == 403) and (
+                    "cloudflare" in response.text.lower()
+                    or "cf-browser-verification" in response.text.lower()
+                    or "just a moment" in response.text.lower()
+                ):
+                    print(
+                        f"Cloudflare challenge detected (attempt {attempt+1}/{max_retries})"
+                    )
+
+                    # Extract challenge tokens if present
+                    soup = BeautifulSoup(response.text, "html.parser")
+
+                    # Look for the refresh meta tag (indicates how long to wait)
+                    refresh_tag = soup.find("meta", {"http-equiv": "refresh"})
+                    wait_seconds = 10  # Default wait time
+                    if refresh_tag and refresh_tag.get("content"):
+                        try:
+                            wait_seconds = int(refresh_tag.get("content"))
+                            print(f"Found refresh directive: {wait_seconds} seconds")
+                        except ValueError:
+                            pass
+
+                    # Check for any form submission that might be required
+                    form = soup.find("form")
+                    if form:
+                        form_action = form.get("action")
+                        form_method = form.get("method", "post").lower()
+                        form_inputs = {}
+
+                        for input_tag in form.find_all("input"):
+                            input_name = input_tag.get("name")
+                            input_value = input_tag.get("value", "")
+                            if input_name:
+                                form_inputs[input_name] = input_value
+
+                        if form_action and form_inputs:
+                            print(f"Found form submission. Action: {form_action}")
+
+                            # Try to submit the form after waiting
+                            wait_time = max(wait_seconds, retry_delay * (attempt + 1))
+                            print(
+                                f"Waiting {wait_time} seconds before submitting form..."
+                            )
+                            time.sleep(wait_time)
+
+                            # Make form submission
+                            if form_method == "post":
+                                return self._cloudflare_request(
+                                    "post", form_action, data=form_inputs
+                                )
+                            else:
+                                return self._cloudflare_request(
+                                    "get", form_action, params=form_inputs
+                                )
+
+                    # Extract JavaScript challenge parameters
+                    scripts = soup.find_all("script")
+                    cf_params = {}
+
+                    for script in scripts:
+                        script_text = script.string if script.string else ""
+
+                        # Look for the _cf_chl_opt JavaScript object
+                        if "_cf_chl_opt" in script_text:
+                            # Extract key parameters if possible
+                            for key in ["cvId", "cType", "cNounce", "cRay", "cHash"]:
+                                match = re.search(
+                                    f"{key}: ['\"]?([^'\",:]+)", script_text
+                                )
+                                if match:
+                                    cf_params[key] = match.group(1)
+
+                            # Extract challenge token
+                            token_match = re.search(
+                                r"__cf_chl_tk=([^'\"&]+)", script_text
+                            )
+                            if token_match:
+                                cf_params["token"] = token_match.group(1)
+
+                    if cf_params:
+                        print(f"Extracted Cloudflare parameters: {cf_params}")
+
+                    # Wait longer with each retry attempt
+                    wait_time = max(wait_seconds, retry_delay * (attempt + 1))
+                    print(f"Waiting {wait_time} seconds for Cloudflare challenge...")
+                    time.sleep(wait_time)
+
+                    # Check for clearance cookie
+                    if "cf_clearance" in self.session.cookies:
+                        print("Found Cloudflare clearance cookie!")
+                        # Try again with the cookie
+                        continue
+
+                    # Try to get to the real page again after waiting
+                    continue
+
+                # Check for specific Cloudflare redirects
+                if response.status_code in (301, 302, 307, 308):
+                    redirect_url = response.headers.get("location")
+                    if redirect_url:
+                        # Check if it's a Cloudflare-related redirect
+                        if (
+                            "cloudflare" in response.headers.get("server", "").lower()
+                            or "__cf_chl" in redirect_url
+                            or "cf_chl_" in redirect_url
+                        ):
+                            print(f"Following Cloudflare redirect to: {redirect_url}")
+
+                            # If URL is relative, make it absolute
+                            if not redirect_url.startswith("http"):
+                                from urllib.parse import urljoin
+
+                                redirect_url = urljoin(url, redirect_url)
+
+                            return self._cloudflare_request(
+                                method, redirect_url, **kwargs
+                            )
+
+                # If the response has JavaScript challenges embedded, extract and process them
+                if "window._cf_chl_opt" in response.text:
+                    print("Found embedded Cloudflare challenge script")
+                    # Save the challenge page for debugging
+                    self._dump_html_to_file(response.text, "cloudflare_challenge")
+
+                    # Wait and retry
+                    wait_time = retry_delay * (attempt + 1)
+                    print(f"Waiting {wait_time} seconds before retrying...")
+                    time.sleep(wait_time)
+                    continue
+
+                # Check if we got a successful response without challenge
+                return response
+
+            except httpx.TimeoutException:
+                print(f"Request timed out (attempt {attempt+1}/{max_retries})")
+                time.sleep(retry_delay)
+            except httpx.HTTPError as e:
+                print(f"HTTP error occurred: {e} (attempt {attempt+1}/{max_retries})")
+                time.sleep(retry_delay)
+
+        # If we've exhausted our retries, raise an exception
+        raise Exception(f"Failed to bypass Cloudflare after {max_retries} attempts")
+
+    def _dump_html_to_file(self, html_content, prefix="dump"):
+        """
+        Save HTML content to a file for debugging
+
+        Args:
+            html_content (str): HTML content to save
+            prefix (str): Prefix for the filename
+        """
+        if not os.path.exists(self.html_dump_dir):
+            os.makedirs(self.html_dump_dir)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.html_dump_dir}/{prefix}_{timestamp}.html"
+
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        print(f"Saved HTML dump to {filename}")
 
     def get_login_form_details(self):
         """
@@ -93,7 +240,12 @@ class WebsiteScraper:
             dict: Form details with action URL and input fields
         """
         try:
-            response = self.session.get(self.login_url)
+            # Use the Cloudflare-aware request method
+            response = self._cloudflare_request("get", self.login_url)
+
+            # Save the HTML for debugging
+            self._dump_html_to_file(response.text, "login_form")
+
             soup = BeautifulSoup(response.text, "html.parser")
 
             # Find the login form - this is very website-specific and may need adjustment
@@ -164,22 +316,6 @@ class WebsiteScraper:
             # Return a default structure that can be used by Selenium
             return {"action": self.login_url, "inputs": {}, "method": "post"}
 
-    def login(self, username, password):
-        """
-        Login to the website using provided credentials
-
-        Args:
-            username (str): Username or email
-            password (str): Password
-
-        Returns:
-            bool: True if login was successful, False otherwise
-        """
-        if self.use_selenium:
-            return self._login_with_selenium(username, password)
-        else:
-            return self._login_with_requests(username, password)
-
     def _login_with_requests(self, username, password):
         """Login using httpx library"""
         try:
@@ -213,20 +349,41 @@ class WebsiteScraper:
             form_details["inputs"][username_field] = username
             form_details["inputs"][password_field] = password
 
-            # Submit the login form
+            # Submit the login form using Cloudflare-aware request method
             if form_details["method"] == "post":
-                response = self.session.post(
-                    form_details["action"], data=form_details["inputs"]
+                response = self._cloudflare_request(
+                    "post",
+                    form_details["action"],
+                    data=form_details["inputs"],
+                    headers={
+                        "Referer": self.login_url
+                    },  # Add referer for better authenticity
                 )
             else:
-                response = self.session.get(
-                    form_details["action"], params=form_details["inputs"]
+                response = self._cloudflare_request(
+                    "get",
+                    form_details["action"],
+                    params=form_details["inputs"],
+                    headers={"Referer": self.login_url},
                 )
+
+            # Dump HTML to file
+            self._dump_html_to_file(response.text, "login_response")
 
             # Check if login was successful
             if response.status_code == 200 and len(self.session.cookies) > 0:
-                print("Login successful!")
-                return True
+                # Additional check for login success - look for elements that indicate logged in state
+                soup = BeautifulSoup(response.text, "html.parser")
+                # This is site-specific and may need to be adjusted
+                if soup.find("a", string=re.compile("sign out|logout", re.IGNORECASE)):
+                    print("Login successful! Found logout link in response.")
+                    return True
+                elif not soup.find("form", {"id": "new_user"}):  # No login form visible
+                    print("Login successful! Login form no longer present.")
+                    return True
+                else:
+                    print("Login may have failed. Still seeing login form.")
+                    return False
             else:
                 print(f"Login failed with status code: {response.status_code}")
                 return False
@@ -235,341 +392,103 @@ class WebsiteScraper:
             print(f"Error during login: {e}")
             return False
 
-    def _login_with_selenium(self, username, password):
-        """Login using Selenium WebDriver"""
-        try:
-            # Navigate to login page
-            self.driver.get(self.login_url)
-
-            # Wait for the page to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "form"))
-            )
-
-            # Find username and password fields
-            username_field = None
-            password_field = None
-
-            # Look for common username/password field patterns
-            for input_element in self.driver.find_elements(By.TAG_NAME, "input"):
-                input_type = input_element.get_attribute("type").lower()
-                input_name = (
-                    input_element.get_attribute("name").lower()
-                    if input_element.get_attribute("name")
-                    else ""
-                )
-                input_id = (
-                    input_element.get_attribute("id").lower()
-                    if input_element.get_attribute("id")
-                    else ""
-                )
-
-                # Check for username/email field
-                if input_type in ["text", "email"] and any(
-                    term in input_name or term in input_id
-                    for term in ["user", "email", "login"]
-                ):
-                    username_field = input_element
-
-                # Check for password field
-                if input_type == "password":
-                    password_field = input_element
-
-            if not username_field or not password_field:
-                print(
-                    "Error: Could not identify username or password fields in the browser."
-                )
-                return False
-
-            # Fill in the login fields
-            username_field.clear()
-            username_field.send_keys(username)
-
-            password_field.clear()
-            password_field.send_keys(password)
-
-            # Submit the form
-            password_field.submit()
-
-            # Wait for login to complete
-            time.sleep(3)  # Basic wait
-
-            # Check if login was successful - this is website-specific
-            # For now, we'll just check if we're not still on the login page
-            current_url = self.driver.current_url
-            if self.login_url not in current_url or "login" not in current_url.lower():
-                print("Login successful!")
-
-                # Transfer cookies from Selenium to httpx session
-                for cookie in self.driver.get_cookies():
-                    self.session.cookies.set(cookie["name"], cookie["value"])
-
-                return True
-            else:
-                print("Login failed. Still on login page.")
-                return False
-
-        except Exception as e:
-            print(f"Error during Selenium login: {e}")
-            return False
-
-    def extract_cookies(self):
+    def _scrape_with_requests(self, max_pages=25):
         """
-        Extract cookies from the current session
+        Scrape using httpx library with pagination support
+
+        Args:
+            max_pages (int): Maximum number of pages to scrape
 
         Returns:
-            dict: Dictionary of cookies
-        """
-        if self.use_selenium and self.driver:
-            # Get cookies from Selenium
-            return {
-                cookie["name"]: cookie["value"] for cookie in self.driver.get_cookies()
-            }
-        else:
-            # Get cookies from httpx session
-            return {k: v for k, v in self.session.cookies.items()}
-
-    def save_cookies_to_file(self, filename="cookies.json"):
-        """
-        Save cookies to a file
-
-        Args:
-            filename (str): Name of the file to save cookies to
-        """
-        cookies = self.extract_cookies()
-        with open(filename, "w") as f:
-            json.dump(cookies, f, indent=4)
-        print(f"Cookies saved to {filename}")
-
-    def load_cookies_from_file(self, filename="cookies.json"):
-        """
-        Load cookies from a file
-
-        Args:
-            filename (str): Name of the file to load cookies from
+            list: List of extracted alt texts from all pages combined
         """
         try:
-            with open(filename, "r") as f:
-                cookies = json.load(f)
+            all_alt_texts = []
 
-            # Set cookies in the appropriate context
-            if self.use_selenium and self.driver:
-                self.driver.get(
-                    self.target_url.split("/")[0] + "//" + self.target_url.split("/")[2]
-                )  # Load domain first
-                for name, value in cookies.items():
-                    self.driver.add_cookie({"name": name, "value": value})
+            for page_num in range(1, max_pages + 1):
+                # Construct URL with page parameter
+                if "?" in self.target_url:
+                    # URL already has query parameters
+                    page_url = f"{self.target_url}&page={page_num}"
+                else:
+                    # URL doesn't have query parameters yet
+                    page_url = f"{self.target_url}?page={page_num}"
 
-            # Always set cookies in the httpx session too
-            for name, value in cookies.items():
-                self.session.cookies.set(name, value)
+                print(f"Scraping page {page_num} of {max_pages}: {page_url}")
 
-            print(f"Cookies loaded from {filename}")
-        except FileNotFoundError:
-            print(f"Cookie file {filename} not found.")
-        except Exception as e:
-            print(f"Error loading cookies: {e}")
+                # Request the target page using Cloudflare-aware request
+                response = self._cloudflare_request("get", page_url)
 
-    def extract_alt_tags_with_deduplication(self, html_content):
-        """
-        Extract alt text from img tags within book pane divs, ensuring only
-        one alt text per book pane to avoid duplicates.
+                # Dump HTML for debugging
+                self._dump_html_to_file(response.text, f"page_{page_num}")
 
-        Args:
-            html_content (str): HTML content to parse
-
-        Returns:
-            list: List of extracted alt text strings without duplicates
-        """
-        # Parse the HTML
-        soup = BeautifulSoup(html_content, "html.parser")
-
-        # Find all book pane divs
-        book_panes = soup.find_all("div", class_="book-pane-content grid grid-cols-10")
-
-        # Extract one alt text from each book pane
-        alt_texts = []
-        seen_alt_texts = set()  # For tracking duplicates
-
-        for pane in book_panes:
-            # Find the book cover div within this pane
-            book_cover = pane.find("div", class_="book-cover")
-            if book_cover:
-                # Find the img tag
-                img = book_cover.find("img")
-                if img and img.has_attr("alt"):
-                    alt_text = img["alt"]
-
-                    # Only add if we haven't seen this alt text before
-                    if alt_text not in seen_alt_texts:
-                        alt_texts.append(alt_text)
-                        seen_alt_texts.add(alt_text)
-
-        return alt_texts
-
-    def scrape_target_page(self, scroll_count=10, scroll_pause_time=2):
-        """
-        Scrape the target page using the authenticated session,
-        handling infinite scroll if using Selenium
-
-        Args:
-            scroll_count (int): Number of times to scroll the page (for Selenium)
-            scroll_pause_time (float): Time to pause between scrolls in seconds
-
-        Returns:
-            list: List of extracted alt texts
-        """
-        if self.use_selenium and self.driver:
-            return self._scrape_with_selenium(scroll_count, scroll_pause_time)
-        else:
-            return self._scrape_with_requests()
-
-    def _scrape_with_requests(self):
-        """Scrape using httpx library (no infinite scroll support)"""
-        try:
-            # Request the target page
-            response = self.session.get(self.target_url)
-
-            if response.status_code != 200:
-                print(
-                    f"Error accessing target page: Status code {response.status_code}"
-                )
-                return []
-
-            # Extract alt tags from the response with deduplication
-            alt_texts = self.extract_alt_tags_with_deduplication(response.text)
-
-            return alt_texts
-
-        except Exception as e:
-            print(f"Error scraping target page with httpx: {e}")
-            return []
-
-    def _scrape_with_selenium(self, scroll_count=10, scroll_pause_time=2):
-        """
-        Scrape using Selenium with infinite scroll support
-
-        Args:
-            scroll_count (int): Number of times to scroll the page
-            scroll_pause_time (float): Time to pause between scrolls in seconds
-
-        Returns:
-            list: List of extracted alt texts
-        """
-        try:
-            # Navigate to the target page
-            self.driver.get(self.target_url)
-
-            # Wait for the page to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "book-cover"))
-            )
-
-            print(f"Starting to scroll the page {scroll_count} times...")
-            print("Use Ctrl+C to stop scrolling if you've loaded enough content.")
-
-            # Get initial scroll height
-            last_height = self.driver.execute_script(
-                "return document.body.scrollHeight"
-            )
-
-            # Track the number of scrolls without new content
-            no_change_count = 0
-            max_no_change = (
-                3  # Stop if we've scrolled this many times without new content
-            )
-
-            # Track the number of books found after each scroll
-            last_book_count = 0
-
-            try:
-                # Scroll down to load more content
-                for i in range(scroll_count):
-                    print(f"Scroll {i+1}/{scroll_count}", end="")
-
-                    # Scroll down to bottom
-                    self.driver.execute_script(
-                        "window.scrollTo(0, document.body.scrollHeight);"
-                    )
-
-                    # Wait to load page
-                    time.sleep(scroll_pause_time)
-
-                    # Calculate new scroll height and compare with last scroll height
-                    new_height = self.driver.execute_script(
-                        "return document.body.scrollHeight"
-                    )
-
-                    # Get current book count
-                    current_book_panes = self.driver.find_elements(
-                        By.CLASS_NAME, "book-pane-content"
-                    )
-                    current_book_count = len(current_book_panes)
-
+                if response.status_code != 200:
                     print(
-                        f" - Found {current_book_count} books (New: {current_book_count - last_book_count})"
+                        f"Error accessing page {page_num}: Status code {response.status_code}"
                     )
+                    # Don't try any more pages if we hit an error
+                    break
 
-                    # Check if the page height has changed
-                    if new_height == last_height:
-                        no_change_count += 1
-                        print(
-                            f"  No new content detected ({no_change_count}/{max_no_change})"
-                        )
-                        if no_change_count >= max_no_change:
-                            print("  No new content after multiple scrolls. Stopping.")
-                            break
-                    else:
-                        no_change_count = 0
+                # Extract alt tags from the response with deduplication
+                page_alt_texts = self.extract_alt_tags_with_deduplication(response.text)
 
-                    # Check if new books were found
-                    if current_book_count == last_book_count and current_book_count > 0:
-                        no_change_count += 1
-                        print(
-                            f"  No new books detected ({no_change_count}/{max_no_change})"
-                        )
-                        if no_change_count >= max_no_change:
-                            print("  No new books after multiple scrolls. Stopping.")
-                            break
+                # Log the results for this page
+                print(
+                    f"Found {len(page_alt_texts)} unique book entries on page {page_num}"
+                )
 
-                    last_height = new_height
-                    last_book_count = current_book_count
+                # Add to our combined list
+                all_alt_texts.extend(page_alt_texts)
 
-            except KeyboardInterrupt:
-                print("\nScrolling stopped by user")
+                # If we got fewer items than expected, we might be on the last page
+                if len(page_alt_texts) == 0:
+                    print(
+                        f"No more items found on page {page_num}. Stopping pagination."
+                    )
+                    break
 
-            # Extract page source after scrolling
-            page_source = self.driver.page_source
+                # Optional: Add a small delay between requests to avoid overloading the server
+                time.sleep(1)
 
-            # Extract alt tags with deduplication
-            alt_texts = self.extract_alt_tags_with_deduplication(page_source)
+            # Remove any duplicates that might have appeared across different pages
+            unique_alt_texts = list(dict.fromkeys(all_alt_texts))
+            print(f"Total unique books found across all pages: {len(unique_alt_texts)}")
 
-            return alt_texts
+            return unique_alt_texts
 
         except Exception as e:
-            print(f"Error scraping target page with Selenium: {e}")
+            print(f"Error scraping target pages with httpx: {e}")
             return []
 
     def close(self):
         """Close the browser if using Selenium and the httpx client"""
-        if self.use_selenium and self.driver:
-            self.driver.quit()
+
         self.session.close()
 
 
 class LazyLibrarianAPI:
     """Interface with LazyLibrarian API endpoints to add books and authors"""
 
-    def __init__(self, base_url="http://localhost:5299", api_key=None):
+    def __init__(
+        self, base_url="http://localhost:5299", api_key=None, html_dump_dir="html_dumps"
+    ):
         """
         Initialize the LazyLibrarian API client
 
         Args:
             base_url (str): Base URL for LazyLibrarian API
             api_key (str): API key for authentication
+            html_dump_dir (str): Directory to save HTML dumps
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.html_dump_dir = html_dump_dir
+
+        # Create HTML dump directory if it doesn't exist
+        if not os.path.exists(self.html_dump_dir):
+            os.makedirs(self.html_dump_dir)
+            print(f"Created HTML dump directory: {self.html_dump_dir}")
+
         self.client = httpx.Client(
             timeout=30.0
         )  # Create a persistent client with longer timeout
@@ -857,28 +776,8 @@ def main():
     login_url = "https://app.thestorygraph.com/users/sign_in"
     target_url = "https://app.thestorygraph.com/to-read/0xchloe"
 
-    # Ask if user wants to use Selenium for browser automation
-    use_selenium = (
-        input(
-            "Do you want to use browser automation for infinite scrolling? (y/n): "
-        ).lower()
-        == "y"
-    )
-
-    if use_selenium:
-        try:
-            import selenium
-
-            print("Selenium is installed. Browser automation will be used.")
-        except ImportError:
-            print(
-                "Selenium is not installed. Please install it with: pip install selenium webdriver-manager"
-            )
-            print("Continuing without browser automation...")
-            use_selenium = False
-
     # Create scraper instance
-    scraper = WebsiteScraper(login_url, target_url, use_selenium=use_selenium)
+    scraper = WebsiteScraper(login_url, target_url)
 
     # Ask if user wants to use saved cookies
     use_saved_cookies = (
@@ -895,24 +794,14 @@ def main():
         # Test if cookies are valid
         print("Testing cookies...")
 
-        if use_selenium:
-            # For Selenium, navigate to the target URL and check if we're redirected to login
-            scraper.driver.get(target_url)
-            time.sleep(2)  # Wait for page to load
-            current_url = scraper.driver.current_url
-            if "login" in current_url.lower():
-                print("Cookies are invalid or expired. Please login again.")
-                use_saved_cookies = False
-            else:
-                print("Cookies are valid!")
+        # For requests, make a request and check if we're redirected
+        response = scraper.session.get(target_url)
+        print(response.text)
+        if "sign_in" in response.url.lower():
+            print("Cookies are invalid or expired. Please login again.")
+            use_saved_cookies = False
         else:
-            # For requests, make a request and check if we're redirected
-            response = scraper.session.get(target_url)
-            if "login" in response.url.lower():
-                print("Cookies are invalid or expired. Please login again.")
-                use_saved_cookies = False
-            else:
-                print("Cookies are valid!")
+            print("Cookies are valid!")
 
     if not use_saved_cookies:
         # Get login credentials
@@ -939,33 +828,10 @@ def main():
             scraper.save_cookies_to_file(cookie_file)
 
     # If using Selenium, ask for scroll count and pause time
-    scroll_count = 10
-    scroll_pause_time = 2
 
-    if use_selenium:
-        try:
-            scroll_input = input("Enter number of times to scroll (default: 10): ")
-            if scroll_input.strip():
-                scroll_count = int(scroll_input)
-
-            pause_input = input("Enter seconds to pause between scrolls (default: 2): ")
-            if pause_input.strip():
-                scroll_pause_time = float(pause_input)
-        except ValueError:
-            print("Invalid input. Using defaults.")
-
-    # Scrape the target page
-    print("\nScraping target page...")
-    if use_selenium:
-        print("Using browser automation with infinite scroll support.")
-        print("The browser will scroll down automatically to load more content.")
-        print(
-            "Press Ctrl+C at any time to stop scrolling and extract the currently loaded books."
-        )
-
-    alt_texts = scraper.scrape_target_page(
-        scroll_count=scroll_count, scroll_pause_time=scroll_pause_time
-    )
+    page = scraper.scrape_target_page()
+    print(page)
+    alt_texts = scraper.scrape_target_page()
 
     if alt_texts:
         print(f"\nFound {len(alt_texts)} unique book alt tags!")
