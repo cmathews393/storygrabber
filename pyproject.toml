@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "storygrabber"
+version = "0.1.0"
+description = ""
+authors = ["0xChloe <chloe@catastrophesoftware.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+selenium = "^4.31.0"
+httpx = "^0.28.1"
+beautifulsoup4 = "^4.13.3"
+webdriver-manager = "^4.0.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
