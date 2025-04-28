@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+FROM python:slim
 
 # Install supercronic for scheduling
 ENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.1.12/supercronic-linux-amd64 \
@@ -30,7 +30,7 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 
 # Install dependencies
-RUN poetry install --no-dev --no-root
+RUN poetry install --only main --no-root
 
 # Copy application code
 COPY . .

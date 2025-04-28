@@ -2,9 +2,7 @@ version: "3"
 
 services:
   storygrabber:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/cmathews393/storygrabber:latest
     container_name: storygrabber
     restart: unless-stopped
     environment:
