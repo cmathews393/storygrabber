@@ -106,6 +106,9 @@ class StoryGrabber:
 
                         logger.debug(f"Found {len(book_divs)} books on page {page_num}")
 
+                        # Use a set to track unique book identifiers (title + author)
+                        seen_books = set()
+
                         for book_div in book_divs:
                             # Extract book URL and title
                             title_link = book_div.find("h3").find("a")
@@ -118,6 +121,17 @@ class StoryGrabber:
                             )
                             author = author_link.text.strip() if author_link else ""
 
+                            # Create a unique identifier for this book
+                            book_identifier = f"{book_title}|{author}"
+
+                            # Skip if we've already seen this book
+                            if book_identifier in seen_books:
+                                logger.debug(
+                                    f"Skipping duplicate book: '{book_title}' by {author}"
+                                )
+                                continue
+
+                            seen_books.add(book_identifier)
                             logger.debug(f"Extracted book: '{book_title}' by {author}")
                             books.append((book_url, book_title, author))
 
@@ -205,6 +219,7 @@ def main():
                                 f"Checking if author '{book_author}' exists in LazyLibrarian"
                             )
                             author_search = ll_client.find_author(book_author)
+                            logger.debug(author_search)
                             if author_search.get("success", False):
                                 logger.debug(
                                     f"Adding author '{book_author}' to LazyLibrarian"
@@ -216,12 +231,15 @@ def main():
                                 f"Searching for book '{book_title}' in LazyLibrarian"
                             )
                             book_search = ll_client.find_book(book_title)
+                            logger.debug(book_search)
                             if book_search.get("success", False):
                                 # If found, queue the book
                                 logger.debug(
                                     f"Queuing book '{book_title}' in LazyLibrarian"
                                 )
+                                ll_client.add_book(book_search.get("id"))
                                 ll_client.queue_book(book_search.get("id"))
+                                ll_client.search_book(book_search.get("id"))
 
                             logger.success(
                                 f"Successfully added '{book_title}' to LazyLibrarian"
