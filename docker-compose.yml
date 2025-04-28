@@ -1,0 +1,30 @@
+version: "3"
+
+services:
+  storygrabber:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: storygrabber
+    restart: unless-stopped
+    environment:
+      - FS_URL=http://flaresolverr:8191/v1
+      # You can set other environment variables here or use env_file
+    env_file:
+      - .env
+    depends_on: # remove this if you are not using our flaresolverr deployment!
+      - flaresolverr
+    volumes:
+      - ./logs:/app/logs # Optional: for persistent logs
+  # If you have your own instance of flaresolverr, you can set the FS_URL to point to it and remove the flaresolverr service from this file.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+      - TZ=UTC
+    ports:
+      - "8191:8191" # Expose port if you need direct access outside Docker network
