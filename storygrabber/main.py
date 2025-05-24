@@ -15,7 +15,7 @@ dotenv.load_dotenv()
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logger.remove()  # Remove default handler
 logger.add(
-    "logs/storygrabber.log",
+    "/app/logs/storygrabber.log",
     rotation="10 MB",
     level=log_level,
     format="{time} | {level} | {message}",
@@ -136,6 +136,15 @@ class StoryGrabber:
                             books.append((book_url, book_title, author))
 
                     logger.success(f"Successfully extracted {len(books)} books")
+                    destroy_body = {
+                        "cmd": "sessions.destroy",
+                        "session": self.session_id,
+                    }
+                    destroy_req = self.client.post(self.base_url, json=destroy_body)
+                    if destroy_req.status_code == 200:
+                        logger.info("Session destroyed successfully")
+                    else:
+                        logger.error(f"Failed to destroy session: {destroy_req.text}")
                     return books
                 else:
                     logger.warning("Could not extract book count from page")
