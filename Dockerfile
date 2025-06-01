@@ -40,7 +40,9 @@ RUN echo "0 */8 * * * python -m storygrabber.main" > /app/crontab
 
 # Run as non-root user
 RUN useradd -m appuser
+RUN mkdir -p /app/logs
 RUN chown -R appuser:appuser /app
+
 USER appuser
 
 # Run supercronic with our crontab
