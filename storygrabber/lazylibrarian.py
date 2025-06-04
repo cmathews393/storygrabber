@@ -1,7 +1,11 @@
 import urllib.parse
 from typing import Any, Dict
-
+from loguru import logger
 import requests
+
+logger.add(
+    "lazylibrarian.log", level="DEBUG", rotation="10 MB", backtrace=True, diagnose=True
+)
 
 
 class LazyLibrarianClient:
@@ -61,7 +65,7 @@ class LazyLibrarianClient:
         try:
             response = self.session.get(url)
             response.raise_for_status()
-
+            logger.debug(f"LazyLibrarian API response: {response.text}")
             # Check if response is JSON
             content_type = response.headers.get("Content-Type", "")
             if "json" in content_type:
