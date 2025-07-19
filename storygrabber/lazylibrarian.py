@@ -180,7 +180,7 @@ class LazyLibrarianClient:
 
     def search_book(
         self, book_id: str, book_type: str = "eBook", wait: bool = False
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, str | int | dict | list]:
         """
         Search for a specific book.
 

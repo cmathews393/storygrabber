@@ -284,7 +284,13 @@ def main():
                                     )
                                     logger.debug(add_result)
                                     ll_client.queue_book(book_search.get("id"))
+                                    ll_client.queue_book(
+                                        book_search.get("id"), book_type="AudioBook"
+                                    )
                                     ll_client.search_book(book_search.get("id"))
+                                    ll_client.search_book(
+                                        book_search.get("id"), book_type="AudioBook"
+                                    )
 
                                 logger.success(
                                     f"Successfully added '{book_title}' to LazyLibrarian"
