@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
+import httpx
 
 
 class ReadarrClient:
@@ -32,7 +32,7 @@ class ReadarrClient:
         protocol = "https" if use_https else "http"
         self.base_url = f"{protocol}://{host}:{port}{base_path}/api/v1"
         self.api_key = api_key
-        self.session = requests.Session()
+        self.session = httpx.Client()
         self.session.headers.update(
             {"X-Api-Key": api_key, "Content-Type": "application/json"}
         )
@@ -72,7 +72,7 @@ class ReadarrClient:
                 return response.json()
             return {"success": True}
 
-        except requests.RequestException as e:
+        except httpx.RequestError as e:
             return {"success": False, "error": str(e)}
 
     # System Information

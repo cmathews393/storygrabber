@@ -1,7 +1,8 @@
 import urllib.parse
 from typing import Any, Dict, Optional
+
+import httpx
 from loguru import logger
-import requests
 
 logger.add(
     "lazylibrarian.log", level="DEBUG", rotation="10 MB", backtrace=True, diagnose=True
@@ -30,7 +31,7 @@ class LazyLibrarianClient:
         protocol = "https" if use_https else "http"
         self.base_url = f"{protocol}://{host}:{port}/api"
         self.api_key = api_key
-        self.session = requests.Session()
+        self.session = httpx.Client()
 
     def _make_request(
         self, command: str, params: dict[str, str] | None = None, wait: bool = False
@@ -82,7 +83,7 @@ class LazyLibrarianClient:
             else:
                 return {"success": True, "message": response.text}
 
-        except requests.RequestException as e:
+        except httpx.RequestError as e:
             return {"success": False, "error": str(e)}
 
     # Author management methods

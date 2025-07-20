@@ -1,3 +1,5 @@
+import argparse
+import json
 import os
 import re
 
@@ -170,6 +172,138 @@ class StoryGrabber:
         # If we can't extract the count or there's an error
         logger.warning("Returning empty book list due to errors")
         return []
+
+
+def dump_books_to_file(books: dict, filename: str) -> None:
+    """
+    Dump the books dictionary to a JSON file.
+    Args:
+        books: dict of user -> list of (url, title, author) tuples
+        filename: path to output JSON file
+    """
+    # Convert tuples to dicts for JSON serialization
+    serializable = {}
+    for user, booklist in books.items():
+        serializable[user] = [
+            {"url": b[0], "title": b[1], "author": b[2]} for b in booklist
+        ]
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(serializable, f, indent=2)
+    logger.info(
+        f"Dumped {sum(len(v) for v in serializable.values())} books to {filename}"
+    )
+
+
+def import_books_from_file(filename: str, manager: str = "Lazy") -> None:
+    """
+    Import books from a JSON file and add them to the selected manager.
+    Args:
+        filename: path to JSON file (as produced by dump_books_to_file)
+        manager: "Lazy" or "Readarr"
+    """
+    with open(filename, "r", encoding="utf-8") as f:
+        books_by_user = json.load(f)
+
+    # Setup managers
+    ll_host = os.getenv("LL_HOST", "localhost")
+    ll_port = int(os.getenv("LL_PORT", "5299"))
+    ll_api_key = os.getenv("LL_API_KEY", "")
+    ll_use_https = os.getenv("LL_HTTPS", "False").lower() == "true"
+    readarr_host = os.getenv("READARR_HOST", "localhost")
+    readarr_port = int(os.getenv("READARR_PORT", "8787"))
+    readarr_api_key = os.getenv("READARR_API_KEY", "")
+    readarr_use_https = os.getenv("READARR_HTTPS", "False").lower() == "true"
+    readarr_base_path = os.getenv("READARR_BASE_PATH", "")
+    readarr_quality_profile_id = int(os.getenv("READARR_QUALITY_PROFILE_ID", "1"))
+    readarr_metadata_profile_id = int(os.getenv("READARR_METADATA_PROFILE_ID", "1"))
+    readarr_root_folder = os.getenv("READARR_ROOT_FOLDER", "/books")
+
+    for user, books in books_by_user.items():
+        logger.info(f"Importing {len(books)} books for user {user}")
+        for book in books:
+            book_title = book["title"]
+            book_author = book["author"]
+            book_url = book["url"]
+            logger.info(f"Importing '{book_title}' by {book_author}")
+
+            if manager == "Lazy":
+                try:
+                    ll_client = LazyLibrarianClient(
+                        host=ll_host,
+                        port=ll_port,
+                        api_key=ll_api_key,
+                        use_https=ll_use_https,
+                    )
+                    ll_client.add_author(book_author)
+                    book_search = ll_client.find_book(book_title)
+                    if book_search.get("success", False):
+                        ll_client.add_book(book_search.get("id"))
+                        ll_client.queue_book(book_search.get("id"))
+                        ll_client.queue_book(
+                            book_search.get("id"), book_type="AudioBook"
+                        )
+                        ll_client.search_book(book_search.get("id"))
+                        ll_client.search_book(
+                            book_search.get("id"), book_type="AudioBook"
+                        )
+                    logger.success(f"Imported '{book_title}' to LazyLibrarian")
+                except Exception as e:
+                    logger.error(f"Error importing book to LazyLibrarian: {e}")
+
+            elif manager == "Readarr":
+                try:
+                    readarr_client = ReadarrClient(
+                        host=readarr_host,
+                        port=readarr_port,
+                        api_key=readarr_api_key,
+                        use_https=readarr_use_https,
+                        base_path=readarr_base_path,
+                    )
+                    best_author_match, _ = readarr_client.lookup_author_by_name(
+                        book_author
+                    )
+                    author_in_readarr = False
+                    author_id = None
+                    existing_authors = readarr_client.get_authors()
+                    if isinstance(existing_authors, list):
+                        for author in existing_authors:
+                            if (
+                                author.get("authorName", "").lower()
+                                == book_author.lower()
+                            ):
+                                author_in_readarr = True
+                                author_id = author.get("id")
+                                break
+                    if not author_in_readarr and best_author_match:
+                        author_result = readarr_client.add_author_by_name(
+                            name=book_author,
+                            quality_profile_id=readarr_quality_profile_id,
+                            metadata_profile_id=readarr_metadata_profile_id,
+                            root_folder_path=readarr_root_folder,
+                            monitored=True,
+                        )
+                        if author_result.get("id"):
+                            author_id = author_result.get("id")
+                    if author_id:
+                        book_result = readarr_client.add_book_by_name(
+                            title=book_title,
+                            author_id=author_id,
+                            monitored=True,
+                            search_on_add=True,
+                        )
+                        if book_result.get("id"):
+                            logger.success(f"Imported '{book_title}' to Readarr")
+                        else:
+                            logger.error(
+                                f"Failed to import '{book_title}' to Readarr: {book_result.get('error', 'Unknown error')}"
+                            )
+                    else:
+                        logger.error(f"Failed to get or add author '{book_author}'")
+                except Exception as e:
+                    logger.error(f"Error importing book to Readarr: {e}")
+
+            else:
+                logger.warning(f"Unknown manager: {manager}")
 
 
 def main():
@@ -478,8 +612,52 @@ def main():
     return results
 
 
-if __name__ == "__main__":
-    result = main()
-    logger.info(
-        f"Processed {sum(len(books) for books in result.values())} books across {len(result)} users"
+def main_cli():
+    parser = argparse.ArgumentParser(description="StoryGrabber CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Dump books command
+    dump_parser = subparsers.add_parser("dump-books", help="Dump books to a file")
+    dump_parser.add_argument("--output", "-o", required=True, help="Output JSON file")
+
+    # Import books command
+    import_parser = subparsers.add_parser(
+        "import-books", help="Import books from a file"
     )
+    import_parser.add_argument("--input", "-i", required=True, help="Input JSON file")
+    import_parser.add_argument(
+        "--manager",
+        "-m",
+        choices=["Lazy", "Readarr"],
+        default="Lazy",
+        help="Book manager to import into",
+    )
+
+    # Main scrape and add command (default)
+    main_parser = subparsers.add_parser(
+        "scrape-and-add", help="Scrape and add books (default main)"
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "dump-books":
+        results = main()
+        dump_books_to_file(
+            {
+                user: [(b["url"], b["title"], b["author"]) for b in books]
+                if books and isinstance(books[0], dict)
+                else books
+                for user, books in results.items()
+            },
+            args.output,
+        )
+    elif args.command == "import-books":
+        import_books_from_file(args.input, manager=args.manager)
+    elif args.command == "scrape-and-add":
+        main()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main_cli()
