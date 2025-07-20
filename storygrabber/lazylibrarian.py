@@ -1,3 +1,4 @@
+import json
 import urllib.parse
 from typing import Any, Dict, Optional
 
@@ -11,134 +12,147 @@ logger.add(
 
 class LazyLibrarianClient:
     """
-    A Python client for interacting with LazyLibrarian's API.
-    Focuses primarily on book and author management but provides
-    access to all API functionality.
+    Simple Python client for LazyLibrarian's API.
     """
 
     def __init__(
         self, host: str, port: int, api_key: str, use_https: bool = False
     ) -> None:
-        """
-        Initialize the LazyLibrarian API client.
-
-        Args:
-            host: The hostname or IP address of the LazyLibrarian server
-            port: The port number LazyLibrarian is running on
-            api_key: Your LazyLibrarian API key
-            use_https: Whether to use HTTPS instead of HTTP
-        """
         protocol = "https" if use_https else "http"
         self.base_url = f"{protocol}://{host}:{port}/api"
         self.api_key = api_key
         self.session = httpx.Client()
 
     def _make_request(
-        self, command: str, params: dict[str, str] | None = None, wait: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Make a request to the LazyLibrarian API.
-
-        Args:
-            command: The API command to execute
-            params: Additional parameters for the command
-            wait: Whether to wait for long-running commands to complete
-
-        Returns:
-            The JSON response from the API or a dict with error information
-        """
+        self, command: str, params: Optional[dict[str, str]] = None, wait: bool = False
+    ) -> Any:
         if params is None:
             params = {}
-
-        # Add common parameters
         params["cmd"] = command
         params["apikey"] = self.api_key
-
         if wait:
             params["wait"] = "1"
 
-        # Build the URL with correctly encoded parameters
-        # Use quote instead of quote_plus to avoid + signs, and handle special chars properly
-        encoded_params = []
-        for k, v in params.items():
-            # Convert value to string and encode properly
-            value_str = str(v)
-            # Use quote with safe characters that LazyLibrarian expects
-            encoded_value = urllib.parse.quote(value_str, safe="")
-            encoded_params.append(f"{k}={encoded_value}")
+        # Use urllib.parse.urlencode for proper encoding
+        url = f"{self.base_url}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
 
-        query_string = "&".join(encoded_params)
-        url = f"{self.base_url}?{query_string}"
+        logger.debug(
+            f"Making API request to LazyLibrarian - Command: {command}, Params: {params}"
+        )
+        logger.debug(
+            f"Request URL (without API key): {url.replace(self.api_key, '[REDACTED]')}"
+        )
 
         try:
             response = self.session.get(url)
+            logger.debug(f"HTTP response status: {response.status_code}")
             response.raise_for_status()
-            logger.debug(f"LazyLibrarian API request: {url}")
-            logger.debug(f"LazyLibrarian API response status: {response.status_code}")
-            logger.debug(f"LazyLibrarian API response: {response.text}")
-            # Check if response is JSON
-            content_type = response.headers.get("Content-Type", "")
-            if "json" in content_type:
-                return response.json()
-            else:
-                return {"success": True, "message": response.text}
 
+            # Handle response - either "OK" or JSON data
+            response_text = response.text.strip()
+            logger.debug(f"Raw response text (first 200 chars): {response_text[:200]}")
+
+            if response_text == "OK":
+                logger.debug("Response is 'OK' - returning success dictionary")
+                return {"success": True, "message": "OK"}
+            else:
+                # Parse as JSON using json.loads()
+                try:
+                    parsed_response = json.loads(response_text)
+                    logger.debug(
+                        f"Successfully parsed JSON response, type: {type(parsed_response)}"
+                    )
+                    return parsed_response
+                except json.JSONDecodeError as json_error:
+                    # If it's not valid JSON, return as message
+                    logger.warning(f"Failed to parse response as JSON: {json_error}")
+                    logger.debug(f"Non-JSON response text: {response_text}")
+                    return {"success": True, "message": response_text}
         except httpx.RequestError as e:
+            logger.error(f"Request error for command '{command}': {e}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error for command '{command}': {e}")
             return {"success": False, "error": str(e)}
 
-    # Author management methods
-    def add_author(self, name: str, auto_queue_books: bool = True) -> Dict[str, Any]:
+    def _normalize_response(self, response: Any) -> Dict[str, Any]:
         """
-        Add an author to the LazyLibrarian database by name.
-        Automatically resumes the author and marks their books as wanted.
+        Normalize API responses to ensure they're always dictionaries.
 
         Args:
-            name: The author's name
-            auto_queue_books: Whether to automatically queue the author's books as wanted
+            response: The raw API response
 
         Returns:
-            API response with additional information about resumed author and queued books
+            A normalized dictionary response
         """
-        logger.info(f"Adding author: {name}")
+        logger.debug(f"Normalizing response of type: {type(response)}")
 
-        # Add the author
-        result = self._make_request("addAuthor", {"name": name})
-
-        if not result.get("success", True):
-            logger.error(f"Failed to add author {name}: {result}")
-            return result
-
-        # Extract author ID from the response
-        author_id = None
-        if "authorid" in result:
-            author_id = result["authorid"]
-        elif "id" in result:
-            author_id = result["id"]
-
-        if not author_id:
-            logger.warning(
-                f"No author ID returned when adding {name}, cannot resume or queue books"
+        if isinstance(response, dict):
+            logger.debug("Response is already a dictionary")
+            return response
+        elif isinstance(response, list):
+            logger.debug(
+                f"Response is a list with {len(response)} items - normalizing to dict"
             )
-            return result
-
-        logger.info(f"Successfully added author {name} with ID {author_id}")
-
-        # Resume the author
-        logger.info(f"Resuming author {author_id}")
-        resume_result = self.resume_author(author_id)
-        if not resume_result.get("success", True):
-            logger.warning(f"Failed to resume author {author_id}: {resume_result}")
-
-        # Queue books if requested
-        if auto_queue_books:
-            logger.info(f"Marking books as wanted for author {author_id}")
-            queue_result = self.mark_author_books_wanted(author_id)
-
-            # Combine results
-            result["resumed"] = resume_result
-            result["books_queued"] = queue_result
+            return {"success": True, "data": response}
         else:
-            result["resumed"] = resume_result
+            logger.warning(
+                f"Unexpected response format: {type(response)}, value: {response}"
+            )
+            return {
+                "success": False,
+                "error": f"Unexpected response format: {type(response)}",
+            }
+
+    # Author management
+    def add_author(self, name: str, auto_queue_books: bool = True) -> Any:
+        logger.info(f"Adding author: {name} (auto_queue_books: {auto_queue_books})")
+
+        result = self._make_request("addAuthor", {"name": name})
+        logger.debug(f"addAuthor response: {result}")
+
+        author_id = None
+        success = True
+
+        # Handle response as list: [author_name, author_id, success]
+        if isinstance(result, list):
+            logger.debug(f"Response is list with {len(result)} items")
+            if len(result) > 1:
+                author_id = result[1]
+                logger.debug(f"Extracted author_id from list: {author_id}")
+            if len(result) > 2:
+                success = bool(result[2])
+                logger.debug(f"Extracted success from list: {success}")
+        elif isinstance(result, dict):
+            logger.debug("Response is dictionary")
+            author_id = result.get("authorid") or result.get("id")
+            success = result.get("success", True)
+            logger.debug(
+                f"Extracted from dict - author_id: {author_id}, success: {success}"
+            )
+        else:
+            logger.warning(f"Unexpected result type: {type(result)}")
+
+        if author_id and success:
+            logger.info(f"Successfully added author {name} with ID {author_id}")
+            logger.debug(f"Resuming author {author_id}")
+            self.resume_author(author_id)
+            if auto_queue_books:
+                logger.debug(f"Auto-queuing books for author {author_id}")
+                self.mark_author_books_wanted(author_id)
+        elif author_id and not success:
+            logger.info(
+                f"Author {name} already exists with ID {author_id} - will still resume and queue books"
+            )
+            logger.debug(f"Resuming author {author_id}")
+            self.resume_author(author_id)
+            if auto_queue_books:
+                logger.debug(f"Auto-queuing books for author {author_id}")
+                self.mark_author_books_wanted(author_id)
+        else:
+            logger.warning(
+                f"Failed to add author {name} - author_id: {author_id}, success: {success}"
+            )
 
         return result
 
@@ -147,15 +161,22 @@ class LazyLibrarianClient:
         Test the connection to the LazyLibrarian API.
         Raises an exception if the connection fails.
         """
+        logger.info("Testing connection to LazyLibrarian API")
         try:
             response = self._make_request("getVersion")
+            logger.debug(f"getVersion response: {response}")
+            response = self._normalize_response(response)
+
             if not response.get("success", False):
+                logger.error(
+                    f"Connection test failed: {response.get('error', 'Unknown error')}"
+                )
                 raise ConnectionError(
                     f"Failed to connect: {response.get('error', 'Unknown error')}"
                 )
             logger.info("Successfully connected to LazyLibrarian API")
         except Exception as e:
-            logger.error(f"Connection test failed: {e}")
+            logger.error(f"Connection test failed with exception: {e}")
             raise
 
     def get_all_authors(self) -> Dict[str, Any]:
@@ -165,7 +186,12 @@ class LazyLibrarianClient:
         Returns:
             List of all authors
         """
-        return self._make_request("getIndex")
+        logger.debug("Getting all authors from database")
+        result = self._make_request("getIndex")
+        logger.debug(
+            f"get_all_authors response count: {len(result) if isinstance(result, list) else 'N/A'}"
+        )
+        return self._normalize_response(result)
 
     def add_author_by_id(
         self, author_id: str, auto_queue_books: bool = True
@@ -181,10 +207,15 @@ class LazyLibrarianClient:
         Returns:
             API response with additional information about resumed author and queued books
         """
-        logger.info(f"Adding author by ID: {author_id}")
+        logger.info(
+            f"Adding author by ID: {author_id} (auto_queue_books: {auto_queue_books})"
+        )
 
         # Add the author
         result = self._make_request("addAuthorID", {"id": author_id})
+        logger.debug(f"addAuthorID raw response: {result}")
+        result = self._normalize_response(result)
+        logger.debug(f"addAuthorID normalized response: {result}")
 
         if not result.get("success", True):
             logger.error(f"Failed to add author {author_id}: {result}")
@@ -193,8 +224,12 @@ class LazyLibrarianClient:
         logger.info(f"Successfully added author with ID {author_id}")
 
         # Resume the author
-        logger.info(f"Resuming author {author_id}")
+        logger.debug(f"Resuming author {author_id}")
         resume_result = self.resume_author(author_id)
+        logger.debug(f"resume_author raw response: {resume_result}")
+        resume_result = self._normalize_response(resume_result)
+        logger.debug(f"resume_author normalized response: {resume_result}")
+
         if not resume_result.get("success", True):
             logger.warning(f"Failed to resume author {author_id}: {resume_result}")
 
@@ -202,13 +237,16 @@ class LazyLibrarianClient:
         if auto_queue_books:
             logger.info(f"Marking books as wanted for author {author_id}")
             queue_result = self.mark_author_books_wanted(author_id)
+            logger.debug(f"mark_author_books_wanted response: {queue_result}")
 
             # Combine results
             result["resumed"] = resume_result
             result["books_queued"] = queue_result
         else:
+            logger.debug("Skipping auto-queue books as requested")
             result["resumed"] = resume_result
 
+        logger.info(f"Completed adding author {author_id}")
         return result
 
     def find_author(self, name: str) -> Dict[str, Any]:
@@ -221,7 +259,10 @@ class LazyLibrarianClient:
         Returns:
             Search results
         """
-        return self._make_request("findAuthor", {"name": name})
+        logger.info(f"Searching for author: {name}")
+        result = self._make_request("findAuthor", {"name": name})
+        logger.debug(f"find_author response: {result}")
+        return result
 
     def get_author(self, author_id: str) -> Dict[str, Any]:
         """
@@ -233,7 +274,10 @@ class LazyLibrarianClient:
         Returns:
             Author information and their books
         """
-        return self._make_request("getAuthor", {"id": author_id})
+        logger.debug(f"Getting author information for ID: {author_id}")
+        result = self._make_request("getAuthor", {"id": author_id})
+        logger.debug(f"get_author response: {result}")
+        return result
 
     def remove_author(self, author_id: str) -> Dict[str, Any]:
         """
@@ -245,7 +289,10 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request("removeAuthor", {"id": author_id})
+        logger.info(f"Removing author: {author_id}")
+        result = self._make_request("removeAuthor", {"id": author_id})
+        logger.debug(f"remove_author response: {result}")
+        return result
 
     def refresh_author(self, name: str, refresh_cache: bool = False) -> Dict[str, Any]:
         """
@@ -258,10 +305,13 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
+        logger.info(f"Refreshing author: {name} (refresh_cache: {refresh_cache})")
         params = {"name": name}
         if refresh_cache:
             params["refresh"] = "1"
-        return self._make_request("refreshAuthor", params)
+        result = self._make_request("refreshAuthor", params)
+        logger.debug(f"refresh_author response: {result}")
+        return result
 
     def resume_author(self, author_id: str) -> Dict[str, Any]:
         """
@@ -273,7 +323,10 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request("resumeAuthor", {"id": author_id})
+        logger.debug(f"Resuming author: {author_id}")
+        result = self._make_request("resumeAuthor", {"id": author_id})
+        logger.debug(f"resume_author response: {result}")
+        return result
 
     def mark_author_books_wanted(
         self, author_id: str, book_type: str = "eBook"
@@ -288,10 +341,22 @@ class LazyLibrarianClient:
         Returns:
             Combined results from queuing all books
         """
-        logger.info(f"Getting books for author {author_id} to mark as wanted")
+        logger.info(
+            f"Getting books for author {author_id} to mark as wanted (book_type: {book_type})"
+        )
 
         # Get author information and their books
         author_info = self.get_author(author_id)
+        logger.debug(f"Raw author_info response: {author_info}")
+        author_info = self._normalize_response(author_info)
+        logger.debug(f"Normalized author_info response: {author_info}")
+
+        # Special handling for author info - if response was a list, it's likely the books
+        if "data" in author_info and isinstance(author_info["data"], list):
+            logger.debug("Found list data in normalized response - treating as books")
+            books = author_info["data"]
+            author_info["books"] = books
+
         if not author_info.get("success", True):
             logger.error(f"Failed to get author info: {author_info}")
             return author_info
@@ -300,9 +365,11 @@ class LazyLibrarianClient:
         books = []
         if "books" in author_info:
             books = author_info["books"]
+            logger.debug(f"Found {len(books)} books in 'books' key")
         elif isinstance(author_info, list):
             # Sometimes the response is directly a list of books
             books = author_info
+            logger.debug(f"Author info is directly a list with {len(books)} items")
 
         if not books:
             logger.warning(f"No books found for author {author_id}")
@@ -312,23 +379,36 @@ class LazyLibrarianClient:
                 "books_queued": 0,
             }
 
+        logger.info(f"Found {len(books)} books for author {author_id}")
+
         # Queue each book
         results = []
         books_queued = 0
-        for book in books:
+        for i, book in enumerate(books):
+            logger.debug(f"Processing book {i+1}/{len(books)}: {book}")
             if isinstance(book, dict):
-                book_id = book.get("bookid") or book.get("id")
-                book_title = book.get("title", "Unknown Title")
+                # Try different possible book ID fields
+                book_id = (
+                    book.get("BookID") or 
+                    book.get("bookid") or 
+                    book.get("id")
+                )
+                book_title = book.get("BookName") or book.get("title", "Unknown Title")
                 if book_id:
                     logger.debug(f"Queuing book {book_id} ({book_title})")
                     result = self.queue_book(book_id, book_type)
+                    logger.debug(f"Queue book result: {result}")
                     results.append(result)
+                    result = self._normalize_response(result)
                     if result.get("success", True):
                         books_queued += 1
+                        logger.debug(f"Successfully queued book {book_id}")
+                    else:
+                        logger.warning(f"Failed to queue book {book_id}: {result}")
                 else:
                     logger.warning(f"Book missing ID: {book}")
             else:
-                logger.warning(f"Unexpected book format: {book}")
+                logger.warning(f"Unexpected book format (type: {type(book)}): {book}")
 
         logger.info(f"Successfully queued {books_queued} books for author {author_id}")
         return {
@@ -350,7 +430,10 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request("addBook", {"id": book_id})
+        logger.info(f"Adding book by ID: {book_id}")
+        result = self._make_request("addBook", {"id": book_id})
+        logger.debug(f"add_book response: {result}")
+        return result
 
     def find_book(self, name: str) -> Dict[str, Any]:
         """
@@ -362,7 +445,10 @@ class LazyLibrarianClient:
         Returns:
             Search results
         """
-        return self._make_request("findBook", {"name": name})
+        logger.info(f"Searching for book: {name}")
+        result = self._make_request("findBook", {"name": name})
+        logger.debug(f"find_book response: {result}")
+        return result
 
     def search_book(
         self, book_id: str, book_type: str = "eBook", wait: bool = False
@@ -378,9 +464,14 @@ class LazyLibrarianClient:
         Returns:
             Search results
         """
-        return self._make_request(
+        logger.info(
+            f"Searching for specific book: {book_id} (type: {book_type}, wait: {wait})"
+        )
+        result = self._make_request(
             "searchBook", {"id": book_id, "type": book_type}, wait=wait
         )
+        logger.debug(f"search_book response: {result}")
+        return result
 
     def queue_book(self, book_id: str, book_type: str = "eBook") -> Dict[str, Any]:
         """
@@ -393,7 +484,10 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request("queueBook", {"id": book_id, "type": book_type})
+        logger.debug(f"Queuing book: {book_id} (type: {book_type})")
+        result = self._make_request("queueBook", {"id": book_id, "type": book_type})
+        logger.debug(f"queue_book response: {result}")
+        return result
 
     def unqueue_book(self, book_id: str, book_type: str = "eBook") -> Dict[str, Any]:
         """
@@ -406,7 +500,10 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request("unqueueBook", {"id": book_id, "type": book_type})
+        logger.debug(f"Unqueuing book: {book_id} (type: {book_type})")
+        result = self._make_request("unqueueBook", {"id": book_id, "type": book_type})
+        logger.debug(f"unqueue_book response: {result}")
+        return result
 
     # Library management methods
     def force_library_scan(
@@ -422,10 +519,13 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
+        logger.info(f"Forcing library scan (directory: {directory}, wait: {wait})")
         params = {}
         if directory:
             params["dir"] = directory
-        return self._make_request("forceLibraryScan", params, wait=wait)
+        result = self._make_request("forceLibraryScan", params, wait=wait)
+        logger.debug(f"force_library_scan response: {result}")
+        return result
 
     def force_book_search(
         self, book_type: str = "eBook", wait: bool = False
@@ -440,7 +540,10 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request("forceBookSearch", {"type": book_type}, wait=wait)
+        logger.info(f"Forcing book search (type: {book_type}, wait: {wait})")
+        result = self._make_request("forceBookSearch", {"type": book_type}, wait=wait)
+        logger.debug(f"force_book_search response: {result}")
+        return result
 
     def get_all_books(self) -> Dict[str, Any]:
         """
@@ -449,7 +552,12 @@ class LazyLibrarianClient:
         Returns:
             List of all books
         """
-        return self._make_request("getAllBooks")
+        logger.debug("Getting all books from database")
+        result = self._make_request("getAllBooks")
+        logger.debug(
+            f"get_all_books response count: {len(result) if isinstance(result, list) else 'N/A'}"
+        )
+        return self._normalize_response(result)
 
     def get_wanted(self) -> Dict[str, Any]:
         """
@@ -458,7 +566,12 @@ class LazyLibrarianClient:
         Returns:
             List of wanted books
         """
-        return self._make_request("getWanted")
+        logger.debug("Getting all wanted books")
+        result = self._make_request("getWanted")
+        logger.debug(
+            f"get_wanted response count: {len(result) if isinstance(result, list) else 'N/A'}"
+        )
+        return self._normalize_response(result)
 
     # General API methods
     def help(self) -> Dict[str, Any]:
@@ -468,7 +581,10 @@ class LazyLibrarianClient:
         Returns:
             List of commands and their descriptions
         """
-        return self._make_request("help")
+        logger.debug("Getting API help")
+        result = self._make_request("help")
+        logger.debug("help response received")
+        return result
 
     def get_version(self) -> Dict[str, Any]:
         """
@@ -477,7 +593,10 @@ class LazyLibrarianClient:
         Returns:
             Version information
         """
-        return self._make_request("getVersion")
+        logger.debug("Getting LazyLibrarian version")
+        result = self._make_request("getVersion")
+        logger.debug(f"get_version response: {result}")
+        return result
 
     def search_item(self, item: str) -> Dict[str, Any]:
         """
@@ -489,7 +608,10 @@ class LazyLibrarianClient:
         Returns:
             Search results
         """
-        return self._make_request("searchItem", {"item": item})
+        logger.info(f"Searching for item: {item}")
+        result = self._make_request("searchItem", {"item": item})
+        logger.debug(f"search_item response: {result}")
+        return result
 
     def show_stats(self) -> Dict[str, Any]:
         """
@@ -498,7 +620,10 @@ class LazyLibrarianClient:
         Returns:
             Database statistics
         """
-        return self._make_request("showStats")
+        logger.debug("Getting database statistics")
+        result = self._make_request("showStats")
+        logger.debug(f"show_stats response: {result}")
+        return result
 
     # Execute any API command
     def execute_command(
@@ -515,4 +640,7 @@ class LazyLibrarianClient:
         Returns:
             API response
         """
-        return self._make_request(command, params, wait=wait)
+        logger.info(f"Executing custom command: {command} with params: {params}")
+        result = self._make_request(command, params, wait=wait)
+        logger.debug(f"execute_command response: {result}")
+        return result

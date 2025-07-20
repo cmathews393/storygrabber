@@ -234,18 +234,35 @@ def import_books_from_file(filename: str, manager: str = "Lazy") -> None:
                         api_key=ll_api_key,
                         use_https=ll_use_https,
                     )
-                    ll_client.add_author(book_author)
+                    # Don't auto-queue all books - we only want the specific book
+                    ll_client.add_author(book_author, auto_queue_books=False)
                     book_search = ll_client.find_book(book_title)
-                    if book_search.get("success", False):
-                        ll_client.add_book(book_search.get("id"))
-                        ll_client.queue_book(book_search.get("id"))
-                        ll_client.queue_book(
-                            book_search.get("id"), book_type="AudioBook"
+                    logger.debug(
+                        f"Book search result for '{book_title}': {book_search}"
+                    )
+
+                    # find_book returns a list of book results, not a dict with success/id
+                    if isinstance(book_search, list) and len(book_search) > 0:
+                        # Use the first (best) match
+                        best_match = book_search[0]
+                        book_id = best_match.get("bookid") or best_match.get("id")
+
+                        if book_id:
+                            logger.debug(f"Using book ID {book_id} for '{book_title}'")
+                            ll_client.add_book(book_id)
+                            ll_client.queue_book(book_id)
+                            ll_client.queue_book(book_id, book_type="AudioBook")
+                            ll_client.search_book(book_id)
+                            ll_client.search_book(book_id, book_type="AudioBook")
+                        else:
+                            logger.warning(
+                                f"No book ID found in search result for '{book_title}'"
+                            )
+                    else:
+                        logger.warning(
+                            f"No search results found for book '{book_title}'"
                         )
-                        ll_client.search_book(book_search.get("id"))
-                        ll_client.search_book(
-                            book_search.get("id"), book_type="AudioBook"
-                        )
+
                     logger.success(f"Imported '{book_title}' to LazyLibrarian")
                 except Exception as e:
                     logger.error(f"Error importing book to LazyLibrarian: {e}")
@@ -304,6 +321,191 @@ def import_books_from_file(filename: str, manager: str = "Lazy") -> None:
 
             else:
                 logger.warning(f"Unknown manager: {manager}")
+
+
+def unqueue_all_wanted_books(manager: str = "Lazy") -> dict:
+    """
+    Unqueue all wanted books from the selected manager.
+
+    Args:
+        manager: "Lazy" or "Readarr" (currently only Lazy is supported)
+
+    Returns:
+        Dictionary with results of the unqueue operation
+    """
+    if manager != "Lazy":
+        logger.error(
+            f"Manager '{manager}' not supported for unqueuing. Only 'Lazy' is supported."
+        )
+        return {"success": False, "error": "Unsupported manager"}
+
+    # LazyLibrarian setup
+    ll_host = os.getenv("LL_HOST", "localhost")
+    ll_port = int(os.getenv("LL_PORT", "5299"))
+    ll_api_key = os.getenv("LL_API_KEY", "")
+    ll_use_https = os.getenv("LL_HTTPS", "False").lower() == "true"
+
+    try:
+        ll_client = LazyLibrarianClient(
+            host=ll_host,
+            port=ll_port,
+            api_key=ll_api_key,
+            use_https=ll_use_https,
+        )
+
+        logger.info("Fetching all wanted books from LazyLibrarian...")
+
+        # Get all wanted books
+        wanted_result = ll_client._make_request("getWanted")
+        logger.debug(f"getWanted response type: {type(wanted_result)}")
+        logger.debug(
+            f"getWanted response (first 200 chars): {str(wanted_result)[:200]}"
+        )
+
+        wanted_books = []
+        total_unqueued = 0
+        failed_unqueues = 0
+
+        # Parse the wanted books response - LazyLibrarian returns the array directly
+        if isinstance(wanted_result, list):
+            wanted_books = wanted_result
+            logger.info(f"Found {len(wanted_books)} wanted books")
+        elif isinstance(wanted_result, dict):
+            # Fallback for other response formats
+            if "message" in wanted_result:
+                try:
+                    import json
+
+                    if isinstance(wanted_result["message"], str):
+                        wanted_data = json.loads(wanted_result["message"])
+                    else:
+                        wanted_data = wanted_result["message"]
+
+                    if isinstance(wanted_data, list):
+                        wanted_books = wanted_data
+                        logger.info(f"Found {len(wanted_books)} wanted books")
+                    else:
+                        logger.warning(
+                            f"Unexpected wanted books data format: {type(wanted_data)}"
+                        )
+
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.error(f"Failed to parse wanted books response: {e}")
+                    return {"success": False, "error": f"Failed to parse response: {e}"}
+            else:
+                logger.warning(f"Unexpected dict response format: {wanted_result}")
+                return {"success": False, "error": "Unexpected response format"}
+        else:
+            logger.warning(f"Unexpected wanted response format: {type(wanted_result)}")
+            return {"success": False, "error": "Unexpected response format"}
+
+        if not wanted_books:
+            logger.info("No wanted books found to unqueue")
+            return {
+                "success": True,
+                "total_unqueued": 0,
+                "failed_unqueues": 0,
+                "books": [],
+            }
+
+        results = []
+
+        # Unqueue each wanted book
+        for book in wanted_books:
+            if not isinstance(book, dict):
+                logger.warning(f"Skipping invalid book entry: {book}")
+                continue
+
+            # Use the correct field name from the response
+            book_id = book.get("BookID")  # LazyLibrarian uses "BookID" (capital)
+            book_title = book.get(
+                "BookName", "Unknown Title"
+            )  # LazyLibrarian uses "BookName"
+            author_id = book.get("AuthorID", "")
+
+            if not book_id:
+                logger.warning(
+                    f"No book ID found for '{book_title}' (AuthorID: {author_id})"
+                )
+                failed_unqueues += 1
+                results.append(
+                    {
+                        "title": book_title,
+                        "author_id": author_id,
+                        "success": False,
+                        "error": "No book ID found",
+                    }
+                )
+                continue
+
+            logger.debug(f"Unqueuing book '{book_title}' (ID: {book_id})")
+
+            try:
+                # Unqueue the book (remove from wanted)
+                unqueue_result = ll_client._make_request("unqueueBook", {"id": book_id})
+                logger.debug(f"Unqueue result for {book_id}: {unqueue_result}")
+
+                # Check if unqueue was successful
+                success = True
+                if isinstance(unqueue_result, dict):
+                    success = unqueue_result.get("success", True)
+                elif isinstance(unqueue_result, list):
+                    # Some APIs return [result, message, success]
+                    if len(unqueue_result) >= 3:
+                        success = bool(unqueue_result[2])
+
+                if success:
+                    logger.info(f"Successfully unqueued '{book_title}'")
+                    total_unqueued += 1
+                    results.append(
+                        {
+                            "title": book_title,
+                            "author_id": author_id,
+                            "book_id": book_id,
+                            "success": True,
+                        }
+                    )
+                else:
+                    logger.warning(f"Failed to unqueue '{book_title}'")
+                    failed_unqueues += 1
+                    results.append(
+                        {
+                            "title": book_title,
+                            "author_id": author_id,
+                            "book_id": book_id,
+                            "success": False,
+                            "error": "Unqueue operation failed",
+                        }
+                    )
+
+            except Exception as e:
+                logger.error(f"Error unqueuing book '{book_title}': {e}")
+                failed_unqueues += 1
+                results.append(
+                    {
+                        "title": book_title,
+                        "author_id": author_id,
+                        "book_id": book_id,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
+
+        logger.info(
+            f"Unqueue operation completed: {total_unqueued} successful, {failed_unqueues} failed"
+        )
+
+        return {
+            "success": True,
+            "total_unqueued": total_unqueued,
+            "failed_unqueues": failed_unqueues,
+            "total_processed": len(wanted_books),
+            "books": results,
+        }
+
+    except Exception as e:
+        logger.error(f"Error during unqueue operation: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def main():
@@ -400,30 +602,54 @@ def main():
                                 logger.debug(
                                     f"Adding author '{book_author}' to LazyLibrarian"
                                 )
-                                ll_client.add_author(book_author)
+                                # Don't auto-queue all books - we only want the specific book
+                                ll_client.add_author(
+                                    book_author, auto_queue_books=False
+                                )
 
                                 # Now search for the book
                                 logger.debug(
                                     f"Searching for book '{book_title}' in LazyLibrarian"
                                 )
                                 book_search = ll_client.find_book(book_title)
-                                logger.debug(book_search)
-                                if book_search.get("success", False):
-                                    # If found, queue the book
-                                    logger.debug(
-                                        f"Queuing book '{book_title}' in LazyLibrarian"
-                                    )
-                                    add_result = ll_client.add_book(
-                                        book_search.get("id")
-                                    )
-                                    logger.debug(add_result)
-                                    ll_client.queue_book(book_search.get("id"))
-                                    ll_client.queue_book(
-                                        book_search.get("id"), book_type="AudioBook"
-                                    )
-                                    ll_client.search_book(book_search.get("id"))
-                                    ll_client.search_book(
-                                        book_search.get("id"), book_type="AudioBook"
+                                logger.debug(f"Book search result: {book_search}")
+
+                                # find_book returns a list, not a dict with success/id
+                                if (
+                                    isinstance(book_search, list)
+                                    and len(book_search) > 0
+                                ):
+                                    # Use the first (best) match
+                                    best_match = book_search[0]
+                                    book_id = best_match.get(
+                                        "bookid"
+                                    ) or best_match.get("id")
+
+                                    if book_id:
+                                        logger.debug(
+                                            f"Using book ID {book_id} for '{book_title}'"
+                                        )
+                                        # If found, queue the book
+                                        logger.debug(
+                                            f"Queuing book '{book_title}' in LazyLibrarian"
+                                        )
+                                        add_result = ll_client.add_book(book_id)
+                                        logger.debug(add_result)
+                                        ll_client.queue_book(book_id)
+                                        ll_client.queue_book(
+                                            book_id, book_type="AudioBook"
+                                        )
+                                        ll_client.search_book(book_id)
+                                        ll_client.search_book(
+                                            book_id, book_type="AudioBook"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"No book ID found in search result for '{book_title}'"
+                                        )
+                                else:
+                                    logger.warning(
+                                        f"No search results found for book '{book_title}'"
                                     )
 
                                 logger.success(
@@ -633,6 +859,18 @@ def main_cli():
         help="Book manager to import into",
     )
 
+    # Unqueue all wanted books command
+    unqueue_parser = subparsers.add_parser(
+        "unqueue-wanted", help="Unqueue all wanted books"
+    )
+    unqueue_parser.add_argument(
+        "--manager",
+        "-m",
+        choices=["Lazy", "Readarr"],
+        default="Lazy",
+        help="Book manager to unqueue from",
+    )
+
     # Main scrape and add command (default)
     main_parser = subparsers.add_parser(
         "scrape-and-add", help="Scrape and add books (default main)"
@@ -653,6 +891,16 @@ def main_cli():
         )
     elif args.command == "import-books":
         import_books_from_file(args.input, manager=args.manager)
+    elif args.command == "unqueue-wanted":
+        result = unqueue_all_wanted_books(manager=args.manager)
+        if result["success"]:
+            logger.success(f"Unqueued {result['total_unqueued']} books successfully")
+            if result["failed_unqueues"] > 0:
+                logger.warning(f"{result['failed_unqueues']} books failed to unqueue")
+        else:
+            logger.error(
+                f"Unqueue operation failed: {result.get('error', 'Unknown error')}"
+            )
     elif args.command == "scrape-and-add":
         main()
     else:
