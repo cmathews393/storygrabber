@@ -262,11 +262,11 @@ def main():
                                 )
                                 author_search = ll_client.find_author(book_author)
                                 logger.debug(author_search)
-                                if author_search.get("success", False):
-                                    logger.debug(
-                                        f"Adding author '{book_author}' to LazyLibrarian"
-                                    )
-                                    ll_client.add_author(book_author)
+
+                                logger.debug(
+                                    f"Adding author '{book_author}' to LazyLibrarian"
+                                )
+                                ll_client.add_author(book_author)
 
                                 # Now search for the book
                                 logger.debug(
