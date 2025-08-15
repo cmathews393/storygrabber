@@ -104,6 +104,10 @@ class LazyLibrarianClient:
                 "error": f"Unexpected response format: {type(response)}",
             }
 
+    def list_no_books(self):
+        logger.info("Getting authors with no books")
+        return self._make_request("listNoBooks")
+
     # Author management
     def add_author(self, name: str, auto_queue_books: bool = True) -> Any:
         logger.info(f"Adding author: {name} (auto_queue_books: {auto_queue_books})")
@@ -387,13 +391,8 @@ class LazyLibrarianClient:
         for i, book in enumerate(books):
             logger.debug(f"Processing book {i+1}/{len(books)}: {book}")
             if isinstance(book, dict):
-                # Try different possible book ID fields
-                book_id = (
-                    book.get("BookID") or 
-                    book.get("bookid") or 
-                    book.get("id")
-                )
-                book_title = book.get("BookName") or book.get("title", "Unknown Title")
+                book_id = book.get("bookid") or book.get("id")
+                book_title = book.get("title", "Unknown Title")
                 if book_id:
                     logger.debug(f"Queuing book {book_id} ({book_title})")
                     result = self.queue_book(book_id, book_type)
