@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import re
+import time
+from pathlib import Path
 
 import dotenv
 import httpx
@@ -16,8 +18,12 @@ dotenv.load_dotenv()
 # Configure Loguru logger
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logger.remove()  # Remove default handler
+# Ensure we write logs to the repository-level app/logs directory regardless of CWD
+repo_root = Path(__file__).resolve().parents[1]
+log_file = repo_root / "app" / "logs" / "storygrabber.log"
+log_file.parent.mkdir(parents=True, exist_ok=True)
 logger.add(
-    "./app/logs/storygrabber.log",
+    str(log_file),
     rotation="10 MB",
     level=log_level,
     format="{time} | {level} | {message}",
@@ -90,10 +96,16 @@ class StoryGrabber:
             logger.debug("Initial request successful")
             response = books_req.json().get("solution").get("response")
 
-            if "search-results-count my-4" in response:
-                # Extract the number of books using regex
+            # Log response size and first part to help debug
+            logger.debug(f"Response size: {len(response)} characters")
+            logger.debug(f"First 500 chars of response: {response[:500]}")
+
+            # Check if the search-results-count pattern exists
+            if "search-results-count" in response:
+                logger.debug("Found 'search-results-count' pattern in response")
+                # Extract the number of books using regex - updated to match just the class name
                 book_count_match = re.search(
-                    r'<p class="search-results-count my-4">(\d+) books</p>', response
+                    r'<p class="search-results-count">(\d+) books</p>', response
                 )
                 if book_count_match:
                     book_count = int(book_count_match.group(1))
@@ -108,40 +120,54 @@ class StoryGrabber:
                     for i in range(iterations):
                         page_num = i + 1
                         logger.debug(f"Processing page {page_num} of {iterations}")
+                        seen_books = set()
 
-                        body = {
+                        # Fetch each page via FlaresolverR so we get paginated results
+                        page_url = f"{self.sg_url}?page={page_num}"
+                        page_body = {
                             "cmd": "request.get",
                             "session": self.session_id,
-                            "url": f"{self.sg_url}?page={page_num}",
+                            "url": page_url,
                         }
-                        books_req = self.client.post(self.base_url, json=body)
-                        books_req.raise_for_status()
+                        page_req = self.client.post(self.base_url, json=page_body)
+                        if page_req.status_code != 200:
+                            logger.warning(
+                                f"Failed to fetch page {page_num}: {page_req.status_code}"
+                            )
+                            continue
 
-                        # Extract books from the current page using BeautifulSoup
-                        soup = BeautifulSoup(
-                            books_req.json().get("solution").get("response"),
-                            "html.parser",
+                        page_response = (
+                            page_req.json().get("solution", {}).get("response", "")
                         )
-                        book_divs = soup.find_all(
-                            "div", class_="book-title-author-and-series"
+                        soup = BeautifulSoup(page_response, "html.parser")
+                        # Find blocks that have an h3 title and an author paragraph (class 'font-body')
+                        book_divs = []
+                        for tag in soup.find_all("div"):
+                            h3 = tag.find("h3")
+                            p = tag.find("p", {"class": "font-body"})
+                            if h3 and p:
+                                book_divs.append(tag)
+
+                        logger.debug(
+                            f"Found {len(book_divs)} book divs on page {page_num}"
                         )
-
-                        logger.debug(f"Found {len(book_divs)} books on page {page_num}")
-
-                        # Use a set to track unique book identifiers (title + author)
-                        seen_books = set()
 
                         for book_div in book_divs:
                             # Extract book URL and title
-                            title_link = book_div.find("h3").find("a")
-                            book_url = title_link["href"] if title_link else ""
-                            book_title = title_link.text.strip() if title_link else ""
+                            h3 = book_div.find("h3")
+                            title_link = h3.find("a") if h3 else None
+                            book_url = title_link.get("href", "") if title_link else ""
+                            book_title = (
+                                title_link.get_text(strip=True) if title_link else ""
+                            )
+                            logger.debug(f"Found book url: {book_url}")
 
                             # Extract author
-                            author_link = book_div.find("p", class_="font-body").find(
-                                "a"
+                            p = book_div.find("p", {"class": "font-body"})
+                            author_link = p.find("a") if p else None
+                            author = (
+                                author_link.get_text(strip=True) if author_link else ""
                             )
-                            author = author_link.text.strip() if author_link else ""
 
                             # Create a unique identifier for this book
                             book_identifier = f"{book_title}|{author}"
@@ -163,10 +189,43 @@ class StoryGrabber:
                     return books
                 else:
                     logger.warning("Could not extract book count from page")
+                    # Log some context around where we expected to find it
+                    search_pattern = "search-results-count"
+                    idx = response.find(search_pattern)
+                    if idx != -1:
+                        context_start = max(0, idx - 100)
+                        context_end = min(len(response), idx + 200)
+                        logger.debug(
+                            f"Context around pattern: {response[context_start:context_end]}"
+                        )
             else:
-                logger.warning("No book count found on page")
+                logger.warning("No 'search-results-count' pattern found in response")
+                # Try to find any similar patterns to help debug
+                if "search-results" in response:
+                    logger.debug(
+                        "Found 'search-results' in response (different class maybe?)"
+                    )
+                    # Extract a snippet around "search-results"
+                    idx = response.find("search-results")
+                    context_start = max(0, idx - 100)
+                    context_end = min(len(response), idx + 300)
+                    logger.debug(
+                        f"Context around 'search-results': {response[context_start:context_end]}"
+                    )
+                else:
+                    logger.debug("No 'search-results' found at all in response")
+                    # Log some key indicators that might be present
+                    if "to-read" in response:
+                        logger.debug("Found 'to-read' in response")
+                    if "books" in response.lower():
+                        logger.debug("Found 'books' (case-insensitive) in response")
+                    # Log a larger sample of the response
+                    logger.debug(
+                        f"Sample of response (chars 1000-2000): {response[1000:2000]}"
+                    )
         else:
             logger.error(f"Request failed with status code {books_req.status_code}")
+            logger.error(f"Response body: {books_req.text}")
             books_req.raise_for_status()
 
         # If we can't extract the count or there's an error
@@ -192,6 +251,145 @@ def dump_books_to_file(books: dict, filename: str) -> None:
     logger.info(
         f"Dumped {sum(len(v) for v in serializable.values())} books to {filename}"
     )
+
+
+def queue_book_with_verification(
+    ll_client: LazyLibrarianClient, book_id: str, book_title: str, max_attempts: int = 3
+) -> bool:
+    """
+    Attempt to queue a book and verify it appears in the wanted list. Retries with search/get_all_books if necessary.
+
+    Returns True if the book appears in wanted, False otherwise.
+    """
+    attempt = 0
+    while attempt < max_attempts:
+        attempt += 1
+        logger.debug(
+            f"Queue attempt {attempt}/{max_attempts} for {book_title} (id={book_id})"
+        )
+        try:
+            res = ll_client.queue_book(book_id)
+        except Exception as e:
+            logger.warning(f"queue_book raised exception for {book_id}: {e}")
+            res = {"success": False, "message": str(e)}
+
+        # Normalize message
+        msg = ""
+        success = True
+        if isinstance(res, dict):
+            msg = str(res.get("message", ""))
+            success = res.get("success", True)
+        elif isinstance(res, list):
+            # some responses are [.., success]
+            if len(res) >= 3:
+                success = bool(res[2])
+
+        if success and "Invalid id" not in msg:
+            # quick verification by checking getWanted
+            try:
+                wanted = ll_client._make_request("getWanted")
+                wanted_list = (
+                    wanted
+                    if isinstance(wanted, list)
+                    else wanted.get("message")
+                    if isinstance(wanted, dict)
+                    else None
+                )
+                # if message is JSON string, try parse
+                if isinstance(wanted_list, str):
+                    try:
+                        wanted_list = json.loads(wanted_list)
+                    except Exception:
+                        wanted_list = None
+
+                if isinstance(wanted_list, list):
+                    for w in wanted_list:
+                        # possible id fields
+                        if any(
+                            str(w.get(k, "")) == str(book_id)
+                            for k in ("BookID", "bookid", "id")
+                        ):
+                            # check status keys to ensure the wanted entry is 'Open'
+                            status_val = None
+                            for status_key in (
+                                "Status",
+                                "status",
+                                "BookStatus",
+                                "StatusText",
+                                "status_text",
+                            ):
+                                v = w.get(status_key) if isinstance(w, dict) else None
+                                if isinstance(v, str) and v:
+                                    status_val = v
+                                    break
+                                if isinstance(v, dict) and v.get("Status"):
+                                    status_val = v.get("Status")
+                                    break
+
+                            status_norm = (
+                                str(status_val).strip().lower()
+                                if status_val is not None
+                                else ""
+                            )
+                            # Accept open/want/wanted as valid 'wanted' states
+                            if status_norm and any(
+                                k in status_norm for k in ("open", "want", "wanted")
+                            ):
+                                logger.info(
+                                    f"Verified book {book_title} (id={book_id}) is in Wanted and Open-like state"
+                                )
+                                return True
+                            else:
+                                logger.debug(
+                                    f"Found wanted entry for {book_id} but status is '{status_val}' - not counting as verified"
+                                )
+            except Exception:
+                logger.debug(
+                    "Failed to verify wanted list; assuming queue succeeded based on response"
+                )
+                return True
+
+        # If we reach here, queue didn't appear to stick. Try to nudge LL: search(wait) then look up internal id
+        logger.warning(
+            f"Queue didn't stick for {book_id} on attempt {attempt}; message={msg}"
+        )
+        try:
+            ll_client.search_book(book_id, wait=True)
+        except Exception:
+            logger.debug("search_book(wait=True) failed while retrying")
+
+        try:
+            all_books = ll_client.get_all_books()
+            books_list = (
+                all_books.get("data") if isinstance(all_books, dict) else all_books
+            )
+            internal_id = None
+            if isinstance(books_list, list):
+                for b in books_list:
+                    for key in ("BookID", "bookid", "id"):
+                        if b.get(key) and str(b.get(key)) == str(book_id):
+                            internal_id = b.get(key)
+                            break
+                    if internal_id:
+                        break
+            if internal_id:
+                logger.debug(
+                    f"Found internal id {internal_id} for {book_id}; retrying queue"
+                )
+                try:
+                    ll_client.queue_book(internal_id)
+                except Exception:
+                    logger.debug("queue_book with internal id raised")
+        except Exception:
+            logger.debug("get_all_books failed while retrying")
+
+        # small backoff
+        time.sleep(1 + attempt)
+
+    logger.error(
+        f"Failed to queue book {book_title} (id={book_id}) after {max_attempts} attempts"
+    )
+    return False
 
 
 def import_books_from_file(filename: str, manager: str = "Lazy") -> None:
@@ -224,7 +422,7 @@ def import_books_from_file(filename: str, manager: str = "Lazy") -> None:
             book_title = book["title"]
             book_author = book["author"]
             book_url = book["url"]
-            logger.info(f"Importing '{book_title}' by {book_author}")
+            logger.info(f"Importing '{book_title}' by {book_author} (url={book_url})")
 
             if manager == "Lazy":
                 try:
@@ -250,10 +448,19 @@ def import_books_from_file(filename: str, manager: str = "Lazy") -> None:
                         if book_id:
                             logger.debug(f"Using book ID {book_id} for '{book_title}'")
                             ll_client.add_book(book_id)
-                            ll_client.queue_book(book_id)
-                            ll_client.queue_book(book_id, book_type="AudioBook")
-                            ll_client.search_book(book_id)
-                            ll_client.search_book(book_id, book_type="AudioBook")
+                            # small pause to reduce race with LL internal indexing
+                            try:
+                                time.sleep(0.5)
+                            except Exception:
+                                pass
+
+                            queued = queue_book_with_verification(
+                                ll_client, book_id, book_title, max_attempts=3
+                            )
+                            if not queued:
+                                logger.warning(
+                                    f"Failed to verify queue for {book_title} (id={book_id})"
+                                )
                         else:
                             logger.warning(
                                 f"No book ID found in search result for '{book_title}'"
@@ -629,20 +836,23 @@ def main():
                                         logger.debug(
                                             f"Using book ID {book_id} for '{book_title}'"
                                         )
-                                        # If found, queue the book
-                                        logger.debug(
-                                            f"Queuing book '{book_title}' in LazyLibrarian"
-                                        )
+                                        # If found, add and queue the book (verified)
                                         add_result = ll_client.add_book(book_id)
                                         logger.debug(add_result)
-                                        ll_client.queue_book(book_id)
-                                        ll_client.queue_book(
-                                            book_id, book_type="AudioBook"
+                                        try:
+                                            time.sleep(0.5)
+                                        except Exception:
+                                            pass
+                                        queued = queue_book_with_verification(
+                                            ll_client,
+                                            book_id,
+                                            book_title,
+                                            max_attempts=3,
                                         )
-                                        ll_client.search_book(book_id)
-                                        ll_client.search_book(
-                                            book_id, book_type="AudioBook"
-                                        )
+                                        if not queued:
+                                            logger.warning(
+                                                f"Failed to verify queue for {book_title} (id={book_id})"
+                                            )
                                     else:
                                         logger.warning(
                                             f"No book ID found in search result for '{book_title}'"
@@ -871,10 +1081,8 @@ def main_cli():
         help="Book manager to unqueue from",
     )
 
-    # Main scrape and add command (default)
-    main_parser = subparsers.add_parser(
-        "scrape-and-add", help="Scrape and add books (default main)"
-    )
+    # Main scrape and add command (default) - Removed unused assignment
+    subparsers.add_parser("scrape-and-add", help="Scrape and add books (default main)")
 
     args = parser.parse_args()
 
