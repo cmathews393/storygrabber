@@ -15,12 +15,10 @@
             <div class="sg-nav-links">
               <a href="{{ url_for('main.index') }}" class="sg-nav-link {% if request.path == url_for('main.index') %}active{% endif %}">Home</a>
               <a href="{{ url_for('main.dashboard') }}" class="sg-nav-link {% if request.path == url_for('main.dashboard') %}active{% endif %}">Dashboard</a>
-              <a href="{{ url_for('main.settings') }}" class="sg-nav-link {% if request.path == url_for('main.settings') %}active{% endif %}">Settings</a>
+          
             </div>
           </div>
-          <div class="sg-nav-right">
-            <button id="mobile-menu-btn" aria-label="Open menu" class="sg-mobile-btn">☰</button>
-          </div>
+
         </div>
       </div>
     </nav>
