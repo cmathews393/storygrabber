@@ -124,18 +124,30 @@ def match_books(sg_username: str) -> tuple:
     abs_df = abs_items_aggregated_df(abs_books)
     ll_df = records_to_df(ll_books)
     sg_df = storygraph_records_to_df(sg_books)
-    merged_df = sg_df.merge(
-        ll_df,
-        on=["title", "author"],
+
+    # Match titles case-insensitively while preserving original title for display
+    # Create ephemeral lowercase match key on each DataFrame for merging
+    sg_tmp = sg_df.assign(_match_title=sg_df["title"].str.lower())
+    ll_tmp = ll_df.assign(_match_title=ll_df["title"].str.lower())
+    merged_df = sg_tmp.merge(
+        ll_tmp,
+        on=["_match_title", "author"],
         how="left",
         suffixes=("_sg", "_ll"),
     )
+
     # Merge aggregated ABS fields (adds abs_in_ebook/abs_in_audiobook and library lists)
+    abs_tmp = abs_df.assign(_match_title=abs_df["title"].str.lower())
     abs_merge = merged_df.merge(
-        abs_df,
-        on=["title", "author"],
+        abs_tmp,
+        on=["_match_title", "author"],
         how="left",
     )
+
+    # Prefer original Storygraph title for display and remove ephemeral key
+    if "title_sg" in abs_merge.columns:
+        abs_merge["title"] = abs_merge["title_sg"]
+    abs_merge.drop(columns=["_match_title"], inplace=True)
 
     abs_merge.fillna(value="", inplace=True)
 
