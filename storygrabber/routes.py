@@ -1,23 +1,23 @@
-from flask import Blueprint, jsonify, render_template
+"""Frontend routes."""
+
+from flask import Blueprint, render_template
 
 main_bp = Blueprint("main", __name__)
 
 
 @main_bp.route("/", methods=["GET"])
-def index():
+def index() -> str:
+    """Home page."""
     return render_template("home.html.j2")
 
 
 @main_bp.route("/dashboard", methods=["GET"])
-def dashboard():
+def dashboard() -> str:
+    """Dashboard page."""
     return render_template("dashboard.html.j2")
 
 
 @main_bp.route("/settings", methods=["GET"])
-def settings():
+def settings() -> str:
+    """Settings page."""
     return render_template("settings.html.j2")
-
-
-@main_bp.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "healthy"})
