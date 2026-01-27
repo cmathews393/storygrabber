@@ -315,7 +315,7 @@
     }
 
     // Search LL button (checks LL dataset live)
-    // Leaving button so I don't have to rewrite it, but this needs rewritten, it doesn't work
+    // Improved: normalize LL API response shapes so we never assume an array
     const searchBtn = document.createElement("button");
     searchBtn.type = "button";
     searchBtn.className = "match-search-btn";
@@ -324,16 +324,29 @@
       try {
         searchBtn.disabled = true;
         searchBtn.textContent = "Searching…";
-        const ll = await getLLBooks();
+        const llRes = await getLLBooks();
+        // Normalize to an array of records (handle {data: [...]}, {books: [...]}, or object keyed by id)
+        let ll = [];
+        if (Array.isArray(llRes)) {
+          ll = llRes;
+        } else if (llRes && Array.isArray(llRes.data)) {
+          ll = llRes.data;
+        } else if (llRes && Array.isArray(llRes.books)) {
+          ll = llRes.books;
+        } else if (llRes && typeof llRes === "object") {
+          // coerce object values into an array
+          ll = Object.values(llRes);
+        }
+        const itTitle = (item.title || "").toString().toLowerCase();
+        const itAuthor = (item.author || "").toString().toLowerCase();
         const found = ll.find((rec) => {
-          const t = (rec.title || rec.BookName || "").toString().toLowerCase();
-          const a = (rec.author || rec.AuthorName || "")
+          const t = (rec.title || rec.BookName || rec.bookname || "")
             .toString()
             .toLowerCase();
-          return (
-            (t && t === (item.title || "").toLowerCase()) ||
-            (a && a === (item.author || "").toLowerCase())
-          );
+          const a = (rec.author || rec.AuthorName || rec.authorname || "")
+            .toString()
+            .toLowerCase();
+          return (t && t === itTitle) || (a && a === itAuthor);
         });
         if (found) {
           // Show found details inline (hide timestamps)
@@ -358,10 +371,10 @@
 
     row.appendChild(left);
 
-    // ABS presence column (explicit E/A flags)
+    // ABS presence column (explicit E/A flags) — show styled badges
     const absCol = document.createElement("div");
     absCol.className = "match-abs";
-    // Explicitly check abs_in_ebook / abs_in_audiobook columns and mark Y/N
+    // Explicitly check abs_in_ebook / abs_in_audiobook columns
     const hasEbookFlag =
       item.abs_in_ebook === true ||
       item.abs_in_ebook === "True" ||
@@ -372,9 +385,23 @@
       item.abs_in_audiobook === "True" ||
       item.abs_in_audiobook === "true" ||
       item.abs_in_audiobook === 1;
-    const e = hasEbookFlag ? "Y" : "N";
-    const a = hasAudioFlag ? "Y" : "N";
-    absCol.textContent = `E:${e} A:${a}`;
+
+    const ebookBadge = document.createElement("div");
+    ebookBadge.className = `abs-badge ${hasEbookFlag ? "abs-present" : "abs-absent"}`;
+    ebookBadge.textContent = hasEbookFlag ? "E: Y" : "E: N";
+    ebookBadge.title = hasEbookFlag
+      ? "Ebook present in ABS"
+      : "No ebook in ABS";
+
+    const audioBadge = document.createElement("div");
+    audioBadge.className = `abs-badge ${hasAudioFlag ? "abs-present" : "abs-absent"}`;
+    audioBadge.textContent = hasAudioFlag ? "A: Y" : "A: N";
+    audioBadge.title = hasAudioFlag
+      ? "Audiobook present in ABS"
+      : "No audiobook in ABS";
+
+    absCol.appendChild(ebookBadge);
+    absCol.appendChild(audioBadge);
 
     row.appendChild(statusCol);
     row.appendChild(absCol);
@@ -409,7 +436,10 @@
       results.innerHTML = "";
       meta.textContent = "Fetching matches…";
 
-      const matched = await getMatchedBooks(username, Boolean(forceRefresh.checked));
+      const matched = await getMatchedBooks(
+        username,
+        Boolean(forceRefresh.checked),
+      );
 
       // Show raw JSON response in the debug panel (if present)
       const rawBtn = document.getElementById("match-show-raw-btn");

@@ -154,40 +154,71 @@ body {
 .sg-form {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 1rem; /* a bit more breathing room */
   flex-wrap: wrap;
 }
 .sg-input-wrap {
-  min-width: 220px;
-  flex: 1;
+  max-width: 100%; /* allow it to grow when space is available */
+  min-width: 0; /* allow shrinking in flex containers so the input won't overflow */
+  flex: 1 1 60%;
 }
 .sg-input-lg {
-  min-width: 220px;
+  max-width: 24rem;
 }
 .sg-input {
+  box-sizing: border-box; /* include padding and border in width calculations */
   width: 100%;
-  padding: 0.45rem 0.6rem;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  max-width: 100%;
+  padding: 0.6rem 0.75rem; /* larger hit target */
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   color: #e6edf3;
+  font-size: 0.95rem;
 }
 .sg-input-inline {
   display: flex;
-  gap: 0.75rem;
+  gap: 1rem; /* more space between checkbox groups */
   align-items: center;
+  flex: 0 0 auto; /* don't shrink; wrap to next line instead */
+  margin-left: 0.25rem; /* small offset from the input */
+  flex-wrap: wrap;
 }
 .sg-checkbox {
   display: inline-flex;
   gap: 0.5rem;
   align-items: center;
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(255, 255, 255, 0.85);
+  padding: 0.18rem 0.35rem; /* subtle internal spacing so each checkbox feels separate */
+  border-radius: 6px;
+}
+.sg-checkbox input {
+  margin: 0;
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+.sg-checkbox span {
+  display: inline-block;
 }
 .sg-form-actions {
   margin-left: auto;
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+
+/* Small screens: make form controls stack more comfortably */
+@media (max-width: 520px) {
+  .sg-input-wrap {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+  .sg-form-actions {
+    width: 100%;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+  }
 }
 .sg-btn {
   padding: 0.4rem 0.6rem;
@@ -354,4 +385,23 @@ body {
 .match-info {
   color: rgba(255, 255, 255, 0.6);
   font-size: 0.9rem;
+}
+
+/* ABS presence badges (E/A) */
+.abs-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e5e7eb;
+}
+.abs-present {
+  background: #16a34a;
+  color: #fff;
+}
+.abs-absent {
+  background: #374151;
+  color: #cbd5e1;
 }
