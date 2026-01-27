@@ -36,7 +36,7 @@ def _configure_logging() -> None:
     level = os.environ.get("FLASK_LOG_LEVEL", "INFO").upper()
     logger.remove()
     logger.add(sys.stderr, level=level, format="{time} | {level} | {message}")
-    logger.add("storygrabber.log", level=level, format="{time} | {level} | {message}")
+    # logger.add("storygrabber.log", level=level, format="{time} | {level} | {message}")
 
 
 def _register_blueprints(app: Flask) -> None:
