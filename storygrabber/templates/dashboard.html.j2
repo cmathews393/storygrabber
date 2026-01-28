@@ -1,0 +1,51 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Dashboard - StoryGrab{% endblock %}
+
+{% block content %}
+  <div class="sg-card">
+    <div class="sg-header">
+      <div>
+        <h1 class="sg-title">Dashboard</h1>
+        <p class="sg-text">Manage StoryGraph matches and LazyLibrarian integration.</p>
+      </div>
+    </div>
+
+    <div class="sg-page-sections">
+      <section class="sg-section">
+        <h2 class="sg-section-title">Match StoryGraph → LazyLibrarian</h2>
+        <p class="sg-text">Enter a StoryGraph username to fetch their to-read list and match titles against your LazyLibrarian library. Matches are performed locally; use the "Search LL" action on a row to look up and add missing books.</p>
+
+        <form id="match-books-form" class="sg-form">
+          <div class="sg-input-wrap sg-input-lg">
+            <label for="match-username" class="sr-only">Username</label>
+            <input id="match-username" name="username" class="sg-input" placeholder="StoryGraph username" aria-label="username" />
+          </div>
+
+          <div class="sg-input-inline">
+            <label class="sg-checkbox"><input id="type-ebook" type="checkbox" checked> <span>eBook</span></label>
+            <label class="sg-checkbox"><input id="type-audio" type="checkbox" checked> <span>AudioBook</span></label>
+            <label class="sg-checkbox"><input id="match-refresh" type="checkbox"> <span>Force SG refresh</span></label>
+          </div>
+
+          <div class="sg-form-actions">
+            <button id="match-clear-btn" type="button" class="sg-btn">Clear</button>
+            <button id="match-books-btn" type="submit" class="sg-btn sg-btn-primary">Start Matching</button>
+          </div>
+        </form>
+
+        <div id="match-books-meta" class="sg-meta"></div>
+        
+      </section>
+
+      <section class="sg-section">
+        <h2 class="sg-section-title">Matches</h2>
+        <div id="match-books-results" class="sg-results"></div>
+      </section>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="{{ url_for('static', filename='match_books_widget.js') }}"></script>
+{% endblock %}

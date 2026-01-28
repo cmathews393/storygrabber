@@ -1,0 +1,407 @@
+/* StoryGrab custom styles for dark modern theme */
+:root {
+  --sg-accent: #7c3aed;
+  --sg-accent-2: #6d28d9;
+  --sg-muted: #1f2937;
+  --sg-bg: #0b0f17;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial;
+  background: var(--sg-bg);
+}
+
+/* subtle card style to reuse */
+.sg-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+/* scrollbar tweaks */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* small utility for subtle muted text */
+.text-muted {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Minimal global layout / component classes (no inline utility classes used)
+   Keep this stylesheet as the single source of truth for styling. */
+.sg-app {
+  background: var(--sg-bg);
+  color: #e6edf3;
+  min-height: 100vh;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial;
+}
+.sg-nav {
+  background: var(--sg-darker);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.sg-container {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+.sg-nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 4rem;
+}
+.sg-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.sg-brand {
+  font-weight: 600;
+  color: #fff;
+  text-decoration: none;
+}
+.sg-nav-links {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.sg-nav-link {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+}
+.sg-nav-link.active,
+.sg-nav-link:hover {
+  background: var(--sg-accent);
+  color: #fff;
+}
+.sg-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sg-mobile-btn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.sg-main {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+.sg-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 1rem;
+}
+.sg-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem 0;
+}
+.sg-text {
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0 0 0.5rem 0;
+}
+.sg-link {
+  color: var(--sg-accent);
+}
+.sg-divider {
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  margin: 0.75rem 0;
+}
+.sg-section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem 0;
+}
+
+/* Forms */
+.sg-form {
+  display: flex;
+  align-items: center;
+  gap: 1rem; /* a bit more breathing room */
+  flex-wrap: wrap;
+}
+.sg-input-wrap {
+  max-width: 100%; /* allow it to grow when space is available */
+  min-width: 0; /* allow shrinking in flex containers so the input won't overflow */
+  flex: 1 1 60%;
+}
+.sg-input-lg {
+  max-width: 24rem;
+}
+.sg-input {
+  box-sizing: border-box; /* include padding and border in width calculations */
+  width: 100%;
+  max-width: 100%;
+  padding: 0.6rem 0.75rem; /* larger hit target */
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #e6edf3;
+  font-size: 0.95rem;
+}
+.sg-input-inline {
+  display: flex;
+  gap: 1rem; /* more space between checkbox groups */
+  align-items: center;
+  flex: 0 0 auto; /* don't shrink; wrap to next line instead */
+  margin-left: 0.25rem; /* small offset from the input */
+  flex-wrap: wrap;
+}
+.sg-checkbox {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.85);
+  padding: 0.18rem 0.35rem; /* subtle internal spacing so each checkbox feels separate */
+  border-radius: 6px;
+}
+.sg-checkbox input {
+  margin: 0;
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+.sg-checkbox span {
+  display: inline-block;
+}
+.sg-form-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* Small screens: make form controls stack more comfortably */
+@media (max-width: 520px) {
+  .sg-input-wrap {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+  .sg-form-actions {
+    width: 100%;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+  }
+}
+.sg-btn {
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+}
+.sg-btn-primary {
+  background: var(--sg-accent);
+  color: #fff;
+}
+.sg-btn-secondary {
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(255, 255, 255, 0.8);
+}
+.sg-meta {
+  margin-top: 0.5rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9rem;
+}
+.sg-results {
+  margin-top: 0.5rem;
+}
+
+/* help with long titles */
+.truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Simplified match widget styles — small, centralized classset to make layout
+   predictable and easier to debug (minimal styling applied from JS). */
+.match-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9rem;
+}
+.match-header-left {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+.match-header-status {
+  width: 7rem;
+  flex: none;
+  text-align: center;
+}
+.match-header-right {
+  flex: none;
+}
+
+.match-header-abs {
+  width: 6rem;
+  flex: none;
+  text-align: center;
+}
+
+.match-abs {
+  width: 6rem;
+  flex: none;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.9rem;
+}
+.match-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.match-left {
+  flex: 1;
+  min-width: 0;
+}
+.match-title {
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.match-author {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.match-status {
+  width: 7rem;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #e5e7eb;
+}
+.match-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.match-status-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.75rem;
+}
+.match-status-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e5e7eb;
+}
+
+.status-H {
+  background: #16a34a;
+  color: #fff;
+}
+.status-W {
+  background: #f59e0b;
+  color: #111827;
+}
+.status-S {
+  background: #6b7280;
+  color: #fff;
+}
+.status-I {
+  background: #dc2626;
+  color: #fff;
+}
+.status-empty {
+  background: #374151;
+  color: #cbd5e1;
+}
+
+.match-container {
+  display: block;
+}
+.match-actions {
+  flex: none;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.match-search-btn {
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+}
+.match-info {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.9rem;
+}
+
+/* ABS presence badges (E/A) */
+.abs-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e5e7eb;
+}
+.abs-present {
+  background: #16a34a;
+  color: #fff;
+}
+.abs-absent {
+  background: #374151;
+  color: #cbd5e1;
+}

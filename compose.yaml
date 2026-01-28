@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  app:
+    image: storygrabber:latest
+    env_file:
+      - stack.env
+    container_name: storygrabber_app
+    ports:
+      - "${PORT:-8000}:80"
+    volumes:
+      - sg_cache:/app/cache
+    restart: unless-stopped
+    environment:
+      - PORT=${PORT:-8000}
+      - FS_URL=${FS_URL:-http://localhost:8191/v1}
+      - SG_CACHE_TTL=${SG_CACHE_TTL:-900}
+      - LL_HOST=${LL_HOST:-localhost}
+      - LL_PORT=${LL_PORT:-5299}
+      - LL_API_KEY=${LL_API_KEY:-}
+      - LL_HTTPS=${LL_HTTPS:-False}
+      - LL_CACHE_TTL=${LL_CACHE_TTL:-60}
+      - ABS_URL=${ABS_URL:-}
+      - ABS_KEY=${ABS_KEY:-}
+      - ABS_CACHE_TTL=${ABS_CACHE_TTL:-60}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
+
+volumes:
+  sg_cache:

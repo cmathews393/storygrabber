@@ -8,9 +8,10 @@ book_results.txt
 __pycache__/
 *.py[cod]
 *$py.class
-
+*cache/
 # C extensions
 *.so
+notebook.ipynb
 
 # Distribution / packaging
 .Python
