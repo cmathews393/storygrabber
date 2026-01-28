@@ -2,10 +2,17 @@
 
 ## What is it?
 
-Storygrabber is a self hosted docker container with simple configuration that allows for the pulling of your To-Read list from The StoryGraph and importing into LazyLibrarian. If TSG ever gets an API this will probably end up being deprecated but for now it should work.
+Storygrabber is a small Flask app that allows for pulling down WTR from Storygraph (using a flaresolverr proxy/relay to avoid issues with Cloudflare). You can then match your WTR with LazyLibrarian and Audiobookshelf. The app allows you to mark books as wanted (via LL API) and force a search for Wanted books that are missing.
 
-## How to use it?
+## How to use
 
-I'd STRONGLY recommend using the included docker compose file and a .env file ([How To](https://docs.docker.com/compose/how-tos/environment-variables/set-environment-variables/#use-the-env_file-attribute)). The required environment variables are in the env.example file in this repo. Your storygraph profile must be public, I tried testing with authentication and ran into too many issues so for now at least thats unsupported.
+Set up a flaresolverr container (or add it to the docker compose), get your API keys from Lazy Librarian and Audiobookshelf, put them in as env variables. Navigate to the instance and input a storygraph username (case sensitive!).
 
-If for whatever reason you don't want to use the docker compose, you will need a container with the storygrabber image, and a flaresolverr container/instance. If you have an existing FS instance, its probably easiest to just remove that from the compose and point the envvars to your existing instance, but I have not tested that so I can't say for sure whether it will work. Feel free to open an issue if it doesn't.
+Feel free to report any bugs or issues.
+
+Future features:
+Add a libby integration to check if book is available in library nearby
+Add a link to buy (preferably not from amazon, need to look into APIs or other potential sites we can wrap with flaresolverr)
+Add compatibility for Goodreads maybe? And/or hardcover
+gutenberg/archive.org integration?
+Improve matching
